@@ -1,0 +1,5 @@
+config.env
+*.log
+backups/
+.config.env.tmp.*
+TODO.md
