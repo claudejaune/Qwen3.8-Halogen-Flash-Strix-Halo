@@ -98,6 +98,15 @@ on a dedicated inference box, a real posture change otherwise.
 - **Check what the running build accepts**: `GET /health` reports whether
   images are accepted and why not.
 
+## Suspect a damaged checkpoint
+
+`run.sh` and `refresh.sh` warn when the checkpoint is far below its ~115 GiB
+(incomplete download). For deeper verification — corruption, a file moved by
+hand, bitrot — `./refresh.sh` offers to compute the checkpoint's sha256
+(a few minutes on NVMe) and compare it either against a `CHECKPOINT_SHA256`
+set in config.env or against a hash it recorded on a previous run. A
+mismatch means: delete the checkpoint and `./run.sh` again (resumes from HF).
+
 ## Weights download problems
 
 - First start fetches ~118 GiB into `~/halogen-models`. Interrupted

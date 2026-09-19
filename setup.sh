@@ -21,6 +21,15 @@ MODELS_DIR="$HOME/halogen-models"
 DISK_MIN_GIB=120
 DISK_REC_GIB=130
 
+# Preserve an existing weights location across setup runs (extracted by grep
+# — we deliberately do NOT execute the old config here).
+if [[ -f "$CONFIG_FILE" ]]; then
+    PRESERVED_MODELS_DIR="$(grep -E '^MODELS_DIR=' "$CONFIG_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+    if [[ -n "$PRESERVED_MODELS_DIR" && "$PRESERVED_MODELS_DIR" = /* ]]; then
+        MODELS_DIR="$PRESERVED_MODELS_DIR"
+    fi
+fi
+
 # ── Detect OS ────────────────────────────────────────────────────────────────
 OS_ID="unknown"
 OS_VERSION=""
@@ -254,6 +263,17 @@ echo ""
 
 # ── Step 5: Weights location ─────────────────────────────────────────────────
 info "=== Step 5: Weights ==="
+echo "  Directory the weights (~118 GiB) are downloaded into on first"
+echo "  ./run.sh. Press Enter for the default ($MODELS_DIR, the same path the"
+echo "  upstream quickstart uses). It must be an absolute path."
+ask MODELS_DIR "Weights directory" "$MODELS_DIR"
+# Expand a leading ~ the shell does not expand on read input.
+if [[ "${MODELS_DIR:0:1}" == "~" ]]; then
+    MODELS_DIR="${MODELS_DIR/#\~/$HOME}"
+fi
+if [[ ! "$MODELS_DIR" = /* ]]; then
+    err "The weights directory must be an absolute path, got '$MODELS_DIR'."
+fi
 if [[ ! -d "$MODELS_DIR" ]]; then
     if ask_yes_no "  Create the weights directory $MODELS_DIR?" y; then
         mkdir -p "$MODELS_DIR"
@@ -288,6 +308,9 @@ cat > "$CONFIG_FILE" <<CONFIG_EOF
 BIND_HOST=$BIND_HOST
 PORT=$PORT
 
+# Weights
+MODELS_DIR=$MODELS_DIR
+
 # Engine
 HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
@@ -303,6 +326,11 @@ if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]]; then
     echo "HALOGEN_KV_POOL_POSITIONS=$HALOGEN_KV_POOL_POSITIONS" >> "$CONFIG_FILE"
 fi
 cat >> "$CONFIG_FILE" <<CONFIG_EOF
+
+# Integrity (optional): sha256 of the checkpoint. Upstream publishes none;
+# set it (from the HF page or your own recorded hash) and ./refresh.sh will
+# offer to verify. Leave empty to have refresh.sh record one after the fact.
+# CHECKPOINT_SHA256=
 
 # Advanced (uncomment to override; see docs/how-it-works.md):
 # HALOGEN_CTX=262144

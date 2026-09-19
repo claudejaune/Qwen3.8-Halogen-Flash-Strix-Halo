@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
 DOWNLOAD_REPO="peonist-ai/halogen-qwen3.8-flash-next"
-MODELS_DIR="$HOME/halogen-models"
+DEFAULT_MODELS_DIR="$HOME/halogen-models"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: config.env not found. Run ./setup.sh first." >&2
@@ -18,6 +18,7 @@ fi
 . "$SCRIPT_DIR/lib/common.sh"
 require_not_root
 load_config "$CONFIG_FILE"
+MODELS_DIR="${MODELS_DIR:-$DEFAULT_MODELS_DIR}"
 
 # Validate required vars
 for var in BIND_HOST PORT HALOGEN_IMAGE; do
@@ -45,6 +46,18 @@ if [[ ! -d "$MODELS_DIR" ]]; then
     echo "Error: weights directory not found: $MODELS_DIR" >&2
     echo "Re-run ./setup.sh to create it." >&2
     exit 1
+fi
+
+# Cheap truncation check: a checkpoint that exists but is far below its
+# ~115 GiB is almost certainly incomplete. A full sha256 check is minutes
+# long — ./refresh.sh does that on demand.
+CHECKPOINT_FILE="$MODELS_DIR/qwen38-flash-next-w4b.hgn"
+if [[ -f "$CHECKPOINT_FILE" ]]; then
+    CK_GIB=$(( $(stat -c '%s' "$CHECKPOINT_FILE") / 1073741824 ))
+    if (( CK_GIB < 110 )); then
+        warn "Checkpoint present but only ${CK_GIB} GiB (expect ~115 GiB)."
+        warn "It is probably incomplete; ./run.sh's download resumes, or verify with ./refresh.sh."
+    fi
 fi
 
 # The engine port has no authentication and is never published; the API port

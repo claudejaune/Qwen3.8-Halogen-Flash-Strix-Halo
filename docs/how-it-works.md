@@ -56,6 +56,9 @@ HALOGEN_REASONING_EFFORT=low ./run.sh
 BIND_HOST=127.0.0.1
 PORT=1235
 
+# Weights
+MODELS_DIR=/home/you/halogen-models
+
 # Engine
 HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 HALOGEN_KV_SLOTS=4
@@ -67,6 +70,8 @@ HALOGEN_VISION_TOWER=1
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
 | `PORT` | `1235` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). |
+| `MODELS_DIR` | `~/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
+| `CHECKPOINT_SHA256` | *(unset)* | Optional sha256 of the checkpoint. Upstream publishes none; set it (from the HF page or a recorded hash) and `./refresh.sh` offers to verify. Empty, refresh.sh can record the hash after the fact into `<MODELS_DIR>/checkpoint.sha256` and compare on later runs. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = image default)* | The memory knob: KV positions resident across all conversations (~29.5 KiB each). The image default is 2x the native context and the server lowers it itself if it will not fit. `262144` is the small layout. |
@@ -168,6 +173,26 @@ either moved into the engine or stopped being choices:
 | MTP speculative decoding on/off + draft model file | The MTP drafter is always on by default (`HALOGEN_DRAFTER_DEFAULT=1`); the draft head ships with the checkpoint. |
 | Flash attention / GPU layers / load mode / KV cache quant | No equivalents; the engine manages its own kernels and memory. |
 | `--api-key` for LAN access | **No authentication exists in this engine.** Bind to loopback, or protect a LAN server with a firewall/proxy. |
+
+## Weights integrity
+
+Upstream publishes no checksum for the checkpoint, and the engine only
+verifies *presence* after its download — `hf download` itself validates the
+transfer while it happens, but nothing checks a file that was truncated
+later, moved by hand, or damaged on disk. Three layers cover that gap:
+
+1. **Size sanity check** (always, in `run.sh` and `refresh.sh`): a checkpoint
+   far below its ~115 GiB is almost certainly incomplete.
+2. **Recorded hash**: `./refresh.sh` offers (default No — it takes a few
+   minutes on NVMe) to compute the checkpoint's sha256 once and store it as
+   `<MODELS_DIR>/checkpoint.sha256`; later refreshes can compare against it
+   and detect drift or corruption.
+3. **Given hash**: put a `CHECKPOINT_SHA256=` value in config.env (from the
+   HF page or your own recording) and refresh.sh verifies against that
+   instead.
+
+A mismatch means the file is damaged or not the one the hash came from:
+delete the checkpoint and let `./run.sh` re-download (resumable from HF).
 
 ## Container updates
 

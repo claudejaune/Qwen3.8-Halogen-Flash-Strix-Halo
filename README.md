@@ -40,6 +40,9 @@ After `git pull`, update the container image:
 ./refresh.sh
 ```
 
+It also offers a sha256 integrity check of the checkpoint (upstream
+publishes no checksum; refresh.sh can record one and detect drift later).
+
 You can answer No to every prompt. If the image tag in `config.env` changes,
 a timestamped backup is saved under `backups/`.
 
@@ -51,6 +54,7 @@ a timestamped backup is saved under `backups/`.
 3. Vision on/off
 4. Parallel slots (concurrent requests)
 5. Optional: KV pool size (the memory knob; leave empty for the default)
+6. Weights directory (default `~/halogen-models`, preserved across re-runs)
 
 No model choice: this repo serves one engine and one checkpoint. No MTP
 question: speculative decoding is always on by default. No storage question:
