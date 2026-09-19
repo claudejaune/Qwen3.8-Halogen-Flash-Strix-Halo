@@ -54,7 +54,10 @@ a timestamped backup is saved under `backups/`.
 
 No model choice: this repo serves one engine and one checkpoint. No MTP
 question: speculative decoding is always on by default. No storage question:
-the 47.7 GiB lookup table is streamed from disk automatically.
+the 47.7 GiB lookup table is streamed from disk automatically. Reasoning
+effort defaults to `medium` for requests that don't ask for a level
+(the engine's own default is `xhigh`); a request that sends
+`reasoning_effort` always wins.
 
 ## Documentation
 

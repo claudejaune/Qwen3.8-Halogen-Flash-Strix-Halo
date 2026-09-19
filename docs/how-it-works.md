@@ -51,6 +51,7 @@ PORT=1235
 # Engine
 HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 HALOGEN_KV_SLOTS=4
+HALOGEN_REASONING_EFFORT=medium
 HALOGEN_VISION_TOWER=1
 ```
 
@@ -62,6 +63,7 @@ HALOGEN_VISION_TOWER=1
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = image default)* | The memory knob: KV positions resident across all conversations (~29.5 KiB each). The image default is 2x the native context and the server lowers it itself if it will not fit. `262144` is the small layout. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
+| `HALOGEN_REASONING_EFFORT` | `medium` (set by setup) | Reasoning effort for a request that names none: `minimal`, `low`, `medium`, `high` or `xhigh`. Unset, the engine uses the chat template's own `xhigh`, which thinks for hundreds to thousands of tokens on an agentic prompt — that spend comes out of the request's token budget. A request that sends `reasoning_effort` wins; `/health` reports the effective default. |
 | `HALOGEN_CTX` | *(unset = 262144)* | Advanced: the most context ONE request may use. The native context is the default; there is normally no reason to set this. |
 | `HALOGEN_MODEL_ID` | *(unset)* | Advanced: the model id at `/v1/models`. A label; useful to run two stacks on one host. |
 | `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings). |

@@ -291,6 +291,9 @@ PORT=$PORT
 # Engine
 HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
+# Reasoning effort for requests that send none (the chat template's own
+# default is xhigh, which thinks for hundreds to thousands of tokens).
+HALOGEN_REASONING_EFFORT=medium
 CONFIG_EOF
 
 if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then

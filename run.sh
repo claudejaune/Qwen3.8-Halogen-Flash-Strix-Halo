@@ -90,6 +90,12 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     CMD+=(-e "HALOGEN_VISION_TOWER=1")
 fi
 
+# Reasoning effort for requests that send none (requests that name their
+# own effort win). Unset = the engine's default, the chat template's xhigh.
+if [[ -n "${HALOGEN_REASONING_EFFORT:-}" ]]; then
+    CMD+=(-e "HALOGEN_REASONING_EFFORT=$HALOGEN_REASONING_EFFORT")
+fi
+
 # Free-form extras: space-separated KEY=value pairs, one -e each.
 # shellcheck disable=SC2086
 if [[ -n "${HALOGEN_EXTRA_ENV:-}" ]]; then
