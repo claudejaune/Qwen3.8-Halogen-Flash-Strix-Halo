@@ -71,7 +71,8 @@ HALOGEN_VISION_TOWER=1
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
 | `PORT` | `1235` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). |
 | `MODELS_DIR` | `~/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
-| `CHECKPOINT_SHA256` | *(unset)* | Optional sha256 of the checkpoint. Upstream publishes none; set it (from the HF page or a recorded hash) and `./refresh.sh` offers to verify. Empty, refresh.sh can record the hash after the fact into `<MODELS_DIR>/checkpoint.sha256` and compare on later runs. |
+| `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
+| `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = image default)* | The memory knob: KV positions resident across all conversations (~29.5 KiB each). The image default is 2x the native context and the server lowers it itself if it will not fit. `262144` is the small layout. |
@@ -176,23 +177,40 @@ either moved into the engine or stopped being choices:
 
 ## Weights integrity
 
-Upstream publishes no checksum for the checkpoint, and the engine only
-verifies *presence* after its download — `hf download` itself validates the
-transfer while it happens, but nothing checks a file that was truncated
-later, moved by hand, or damaged on disk. Three layers cover that gap:
+The checkpoint is ~115 GiB and the single most expensive thing on disk, so
+every layer of this repo checks it:
 
-1. **Size sanity check** (always, in `run.sh` and `refresh.sh`): a checkpoint
-   far below its ~115 GiB is almost certainly incomplete.
-2. **Recorded hash**: `./refresh.sh` offers (default No — it takes a few
-   minutes on NVMe) to compute the checkpoint's sha256 once and store it as
-   `<MODELS_DIR>/checkpoint.sha256`; later refreshes can compare against it
-   and detect drift or corruption.
-3. **Given hash**: put a `CHECKPOINT_SHA256=` value in config.env (from the
-   HF page or your own recording) and refresh.sh verifies against that
-   instead.
+1. **Live remote hash** (setup and refresh): the repo's tree API
+   (`huggingface.co/api/models/…/tree/main`) lists the sha256 of every LFS
+   file. `setup.sh` writes the *current* checkpoint hash into config.env as
+   `CHECKPOINT_SHA256` — re-running setup always re-queries, so the pin never
+   goes stale when the creators ship a new version. `refresh.sh` re-queries
+   and compares three ways:
+   - **remote ≠ config's pin** → upstream shipped a new version. Hashing the
+     local file (a few minutes) tells a stale pin from a stale disk: if the
+     local file *is* the new version, config.env is re-pinned and nothing is
+     downloaded; if it is not, refresh.sh offers to stop the server and
+     delete **only** the checkpoint, its quality overlay, and the vision
+     sidecar — `./run.sh` then re-downloads (resumable).
+   - **remote ≠ local file** → the file is damaged; delete and re-download.
+   - **everything matches** → optionally verify the local file against the
+     live hash.
+2. **Size sanity check** (always, in `run.sh` and `refresh.sh`): a checkpoint
+   far below its ~115 GiB is almost certainly incomplete — flagged without
+   any hashing.
+3. **Offline fallback**: with the repo unreachable, refresh.sh falls back to
+   config's pinned hash, or a hash it recorded once into
+   `<MODELS_DIR>/checkpoint.sha256`, or the size check alone.
 
-A mismatch means the file is damaged or not the one the hash came from:
-delete the checkpoint and let `./run.sh` re-download (resumable from HF).
+`VISION_SHA256` works the same way for the vision sidecar (0.84 GiB), which
+the engine **never downloads itself** — the container's entrypoint refuses
+to start with `HALOGEN_VISION_TOWER=1` and no sidecar file beside the
+checkpoint. setup.sh offers to fetch and verify it when you enable vision;
+refresh.sh repairs or updates it if it goes missing or stale.
+
+All network steps are best-effort: offline never blocks setup or refresh,
+and a sha256 of the big checkpoint is only ever computed after an explicit
+yes.
 
 ## Container updates
 

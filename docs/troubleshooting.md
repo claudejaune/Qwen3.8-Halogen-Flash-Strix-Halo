@@ -103,9 +103,38 @@ on a dedicated inference box, a real posture change otherwise.
 `run.sh` and `refresh.sh` warn when the checkpoint is far below its ~115 GiB
 (incomplete download). For deeper verification — corruption, a file moved by
 hand, bitrot — `./refresh.sh` offers to compute the checkpoint's sha256
-(a few minutes on NVMe) and compare it either against a `CHECKPOINT_SHA256`
-set in config.env or against a hash it recorded on a previous run. A
-mismatch means: delete the checkpoint and `./run.sh` again (resumes from HF).
+(a few minutes on NVMe) and compare it against the hash the HF repo
+currently lists, the `CHECKPOINT_SHA256` pinned in config.env, or a hash it
+recorded on a previous run. A mismatch means: delete the checkpoint and
+`./run.sh` again (resumes from HF).
+
+## The creators shipped a new version
+
+`./refresh.sh` re-queries the HF repo's tree API for the checkpoint's
+current sha256. When it differs from the pin in config.env, it first hashes
+your local file (optional, a few minutes) to tell a stale pin from a stale
+disk:
+
+- Local file **is** the new version → config.env is re-pinned; nothing is
+  downloaded.
+- Local file **is not** → refresh.sh offers to stop the server and delete
+  only the checkpoint, its overlay, and the vision sidecar, then you run
+  `./run.sh` to re-download (~118 GiB, resumable). Nothing else on disk is
+  touched, and saying No deletes nothing.
+
+## Vision sidecar missing
+
+The engine never downloads the vision sidecar itself; with
+`HALOGEN_VISION_TOWER=1` and no `qwen38-flash-next-vision.hgn` beside the
+checkpoint the container **exits at startup**. Fixes, in order:
+
+- `./refresh.sh` — offers to download it (0.84 GiB, sha256-verified against
+  the repo's live hash).
+- Re-run `./setup.sh` — it offers the same fetch.
+- By hand: `hf download peonist-ai/halogen-qwen3.8-flash-next qwen38-flash-next-vision.hgn --local-dir ~/halogen-models`
+
+An `http(s)` image URL is refused by design — send `data:` URLs or bare
+base64. `GET /health` reports whether images are accepted and why not.
 
 ## Weights download problems
 

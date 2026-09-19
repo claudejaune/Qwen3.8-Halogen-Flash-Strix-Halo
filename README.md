@@ -40,11 +40,16 @@ After `git pull`, update the container image:
 ./refresh.sh
 ```
 
-It also offers a sha256 integrity check of the checkpoint (upstream
-publishes no checksum; refresh.sh can record one and detect drift later).
+It also offers a sha256 integrity check of the checkpoint against the
+repo's live hash.
 
 You can answer No to every prompt. If the image tag in `config.env` changes,
 a timestamped backup is saved under `backups/`.
+
+`refresh.sh` also talks to the HF repo: it re-checks the checkpoint's sha256
+against what the repo currently lists, so if the creators ship a new version
+it offers to clear the way for a re-download — and it fetches or repairs the
+vision sidecar (which the engine never downloads itself).
 
 ## What setup.sh asks you
 

@@ -9,13 +9,20 @@
 CONFIG_ALLOWED_KEYS=(
     BIND_HOST PORT
     MODELS_DIR
-    CHECKPOINT_SHA256
+    CHECKPOINT_SHA256 VISION_SHA256
     HALOGEN_IMAGE HALOGEN_MODEL_ID
     HALOGEN_CTX HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS
     HALOGEN_VISION_TOWER
     HALOGEN_REASONING_EFFORT
     HALOGEN_EXTRA_ENV
 )
+
+# The Hugging Face repo the engine's checkpoint ships in. The tree API lists
+# every file with its sha256 (the LFS "oid"), which is what
+# hf_remote_sha256() reads.
+HF_REPO_ID="peonist-ai/halogen-qwen3.8-flash-next"
+HF_TREE_API="https://huggingface.co/api/models/$HF_REPO_ID/tree/main"
+HF_RESOLVE_URL="https://huggingface.co/$HF_REPO_ID/resolve/main"
 
 # Keys that may appear in run.sh's generated HALOGEN_* -e list. HALOGEN_EXTRA_ENV
 # is passed through verbatim as extra `-e KEY=value` arguments, so the keys
@@ -172,4 +179,89 @@ podman_container_running() {
     local running
     running="$(podman ps --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')" || return 1
     [[ " $running " == *" $1 "* ]]
+}
+
+# ── Hugging Face helpers ─────────────────────────────────────────────────────
+
+# hf_remote_sha256 <filename>
+# Prints the sha256 the HF repo currently lists for the file (the LFS "oid"
+# in the tree API). Returns 1 when offline, when curl/python3 are missing,
+# or when the file is not in the repo. Never cached — every call is the
+# repo's current state.
+hf_remote_sha256() {
+    local file="$1" json
+    if ! have curl; then
+        echo "hf_remote_sha256: curl not found" >&2
+        return 1
+    fi
+    if ! have python3; then
+        echo "hf_remote_sha256: python3 not found" >&2
+        return 1
+    fi
+    if ! json="$(curl -fsSL --max-time 30 "$HF_TREE_API" 2>/dev/null)"; then
+        echo "hf_remote_sha256: could not reach the HF API (offline?)" >&2
+        return 1
+    fi
+    local oid
+    oid="$(python3 -c '
+import json, sys
+tree = json.load(sys.stdin)
+for entry in tree:
+    if entry.get("path") == sys.argv[1] and "lfs" in entry:
+        print(entry["lfs"]["oid"])
+        break
+' "$1" <<<"$json")"
+    if [[ ! "$oid" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "hf_remote_sha256: $1 not found in $HF_REPO_ID (or the API response changed)" >&2
+        return 1
+    fi
+    printf '%s\n' "$oid"
+}
+
+# hf_fetch_file <filename> <expected-sha256> <dest-dir>
+# Downloads one small file from the weights repo and verifies its sha256.
+# Uses `hf download` when the CLI is present; otherwise curl with resume
+# (-C -). Only for small files (sidecars) — the ~118 GiB checkpoint is
+# fetched by the container itself.
+hf_fetch_file() {
+    local file="$1" expected="$2" dir="$3"
+    local fpath="$dir/$file" actual
+
+    file_sha256() {
+        sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+    }
+
+    mkdir -p "$dir"
+    # Already here and correct? Skip. Here but wrong? Delete and re-download.
+    if [[ -f "$fpath" ]]; then
+        actual="$(file_sha256 "$fpath")"
+        if [[ "$actual" == "$expected" ]]; then
+            ok "Already downloaded and verified: $file"
+            return 0
+        fi
+        warn "Existing $file does not match the repo's sha256 — re-downloading."
+        rm -f "$fpath"
+    fi
+
+    if have hf; then
+        if ! hf download "$HF_REPO_ID" "$file" --local-dir "$dir"; then
+            warn "Download failed: $file"
+            return 1
+        fi
+    elif have curl; then
+        echo "  Downloading $file (hf CLI not found; resumable curl) ..."
+        if ! curl -fL -C - --retry 3 -o "$fpath" "$HF_RESOLVE_URL/$file"; then
+            warn "Download failed: $file"
+            return 1
+        fi
+    else
+        warn "Neither 'hf' nor 'curl' found — cannot download $file."
+        return 1
+    fi
+    actual="$(file_sha256 "$fpath")"
+    if [[ "$actual" != "$expected" ]]; then
+        warn "CHECKSUM MISMATCH for $file: got $actual, expected $expected"
+        return 1
+    fi
+    ok "Downloaded and verified: $file"
 }

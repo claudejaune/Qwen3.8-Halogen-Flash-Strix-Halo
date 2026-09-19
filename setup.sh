@@ -18,6 +18,8 @@ require_not_root
 
 DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
 MODELS_DIR="$HOME/halogen-models"
+CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
+VISION_FILE="qwen38-flash-next-vision.hgn"
 DISK_MIN_GIB=120
 DISK_REC_GIB=130
 
@@ -294,6 +296,28 @@ elif (( avail < DISK_REC_GIB )); then
         err "Stopped. config.env was not written. Free some space and re-run ./setup.sh."
     fi
 fi
+
+# Query the repo's CURRENT sha256 for the checkpoint. Written into config.env
+# so refresh.sh can tell "damaged file" from "upstream shipped a new version".
+# Best effort: offline setup leaves it unset (commented) and everything still
+# works.
+info "Checking the HF repo for the checkpoint's current sha256..."
+REMOTE_CK_SHA=""
+if REMOTE_CK_SHA="$(hf_remote_sha256 "$CHECKPOINT_FILE")"; then
+    ok "Repo lists the checkpoint (sha256 ${REMOTE_CK_SHA:0:12}...)."
+else
+    warn "Could not fetch the repo's sha256 (offline?). Skipping integrity pinning."
+    REMOTE_CK_SHA=""
+fi
+if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
+    REMOTE_VISION_SHA=""
+    if REMOTE_VISION_SHA="$(hf_remote_sha256 "$VISION_FILE")"; then
+        ok "Repo lists the vision sidecar (sha256 ${REMOTE_VISION_SHA:0:12}...)."
+    else
+        warn "Could not fetch the vision sidecar's sha256. It will be checked at download time."
+        REMOTE_VISION_SHA=""
+    fi
+fi
 echo ""
 
 # ── Write config ─────────────────────────────────────────────────────────────
@@ -325,12 +349,20 @@ fi
 if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]]; then
     echo "HALOGEN_KV_POOL_POSITIONS=$HALOGEN_KV_POOL_POSITIONS" >> "$CONFIG_FILE"
 fi
-cat >> "$CONFIG_FILE" <<CONFIG_EOF
 
-# Integrity (optional): sha256 of the checkpoint. Upstream publishes none;
-# set it (from the HF page or your own recorded hash) and ./refresh.sh will
-# offer to verify. Leave empty to have refresh.sh record one after the fact.
-# CHECKPOINT_SHA256=
+# Integrity: the sha256 the HF repo currently lists. refresh.sh compares it
+# against the repo again later — a difference means the checkpoint changed
+# upstream (or your file is damaged). Unset when the API was unreachable.
+if [[ -n "$REMOTE_CK_SHA" ]]; then
+    echo "CHECKPOINT_SHA256=$REMOTE_CK_SHA" >> "$CONFIG_FILE"
+else
+    echo "# CHECKPOINT_SHA256=   # (offline during setup; ./refresh.sh can fill this in)" >> "$CONFIG_FILE"
+fi
+if [[ "$HALOGEN_VISION_TOWER" == "1" && -n "$REMOTE_VISION_SHA" ]]; then
+    echo "VISION_SHA256=$REMOTE_VISION_SHA" >> "$CONFIG_FILE"
+fi
+
+cat >> "$CONFIG_FILE" <<CONFIG_EOF
 
 # Advanced (uncomment to override; see docs/how-it-works.md):
 # HALOGEN_CTX=262144
@@ -341,7 +373,7 @@ CONFIG_EOF
 ok "Config written to: $CONFIG_FILE"
 echo ""
 
-# ── Fetch phase: container image (weights download on first run.sh) ─────────
+# ── Fetch phase: image + vision sidecar (checkpoint downloads on first run.sh)
 info "=== Fetch phase: container image ==="
 if podman image exists "$DEFAULT_IMAGE" 2>/dev/null; then
     ok "Image $DEFAULT_IMAGE already present."
@@ -357,6 +389,38 @@ else
     fi
 fi
 echo ""
+
+# The engine does NOT fetch the vision sidecar itself — with vision on and
+# the file missing it refuses to start. Fetch it here (0.84 GiB, verified
+# against the repo's current sha256).
+if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
+    info "=== Fetch phase: vision sidecar ==="
+    if [[ -f "$MODELS_DIR/$VISION_FILE" ]]; then
+        ok "Vision sidecar already present: $MODELS_DIR/$VISION_FILE"
+        if [[ -n "$REMOTE_VISION_SHA" ]]; then
+            EXISTING_SHA="$(sha256sum "$MODELS_DIR/$VISION_FILE" 2>/dev/null | cut -d' ' -f1)"
+            if [[ "$EXISTING_SHA" != "$REMOTE_VISION_SHA" ]]; then
+                warn "The sidecar on disk does not match the repo's current sha256."
+                if ask_yes_no "  Re-download it?" y; then
+                    hf_fetch_file "$VISION_FILE" "$REMOTE_VISION_SHA" "$MODELS_DIR" || true
+                fi
+            else
+                ok "Vision sidecar matches the repo."
+            fi
+        fi
+    elif [[ -n "$REMOTE_VISION_SHA" ]]; then
+        if ask_yes_no "  Download the vision sidecar now (0.84 GiB, verified)?" y; then
+            hf_fetch_file "$VISION_FILE" "$REMOTE_VISION_SHA" "$MODELS_DIR" || \
+                warn "Vision sidecar download failed. Re-run ./setup.sh or ./refresh.sh later."
+        else
+            warn "Vision is ON but the sidecar is missing — the server will refuse to start with images enabled."
+        fi
+    else
+        warn "Vision is ON but the sidecar is not on disk and the repo was unreachable."
+        echo "  Fetch it before starting: hf download $HF_REPO_ID $VISION_FILE --local-dir $MODELS_DIR"
+    fi
+    echo ""
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo "============================================"
