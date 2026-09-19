@@ -81,7 +81,7 @@ podman run --rm --name halogen-flash \
   -e HALOGEN_KV_SLOTS=4 \
   [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_KV_POOL_POSITIONS=...] \
-  -v ~/models/halogen:/models \
+  -v ~/halogen-models:/models \
   ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 ```
 

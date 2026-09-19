@@ -100,14 +100,14 @@ on a dedicated inference box, a real posture change otherwise.
 
 ## Weights download problems
 
-- First start fetches ~118 GiB into `~/models/halogen`. Interrupted
+- First start fetches ~118 GiB into `~/halogen-models`. Interrupted
   transfers resume on the next `./run.sh`.
 - A truncated tree fails inside the container before the engine loads —
   delete the incomplete files and run again.
 - The 115 GiB checkpoint is never re-fetched for a new image tag; only the
   2.4 GiB sidecar can refresh.
 - To fetch the weights yourself instead (container stays offline):
-  `hf download peonist-ai/halogen-qwen3.8-flash-next --local-dir ~/models/halogen`
+  `hf download peonist-ai/halogen-qwen3.8-flash-next --local-dir ~/halogen-models`
 
 ## Slow image processing
 

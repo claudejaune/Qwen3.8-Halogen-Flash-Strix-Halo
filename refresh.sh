@@ -10,7 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
-MODELS_DIR="$HOME/models/halogen"
+MODELS_DIR="$HOME/halogen-models"
 CHECKPOINT="qwen38-flash-next-w4b.hgn"
 
 # shellcheck source=lib/common.sh

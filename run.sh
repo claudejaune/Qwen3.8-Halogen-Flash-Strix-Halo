@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
 DOWNLOAD_REPO="peonist-ai/halogen-qwen3.8-flash-next"
-MODELS_DIR="$HOME/models/halogen"
+MODELS_DIR="$HOME/halogen-models"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: config.env not found. Run ./setup.sh first." >&2

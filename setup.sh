@@ -17,7 +17,7 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 require_not_root
 
 DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
-MODELS_DIR="$HOME/models/halogen"
+MODELS_DIR="$HOME/halogen-models"
 DISK_MIN_GIB=120
 DISK_REC_GIB=130
 
