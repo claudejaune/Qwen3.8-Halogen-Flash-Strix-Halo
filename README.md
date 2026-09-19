@@ -57,7 +57,8 @@ question: speculative decoding is always on by default. No storage question:
 the 47.7 GiB lookup table is streamed from disk automatically. Reasoning
 effort defaults to `medium` for requests that don't ask for a level
 (the engine's own default is `xhigh`); a request that sends
-`reasoning_effort` always wins.
+`reasoning_effort` always wins, and a per-start override is
+`HALOGEN_REASONING_EFFORT=low ./run.sh`.
 
 ## Documentation
 

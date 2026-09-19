@@ -123,6 +123,13 @@ _load_kv_file() {
             echo "Allowed keys are listed in CONFIG_ALLOWED_KEYS in lib/common.sh." >&2
             return 1
         fi
+        # A key already set in the environment wins over the config file:
+        #   HALOGEN_REASONING_EFFORT=low ./run.sh
+        # overrides the value written by setup.sh for that start. (${var+x}
+        # expands to "x" when set, even to the empty string.)
+        if [[ -n "${!key+x}" ]]; then
+            continue
+        fi
         printf -v "$key" '%s' "$value"
     done < "$file"
     return 0
