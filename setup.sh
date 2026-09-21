@@ -188,7 +188,7 @@ else
 fi
 
 while true; do
-    ask_number PORT "Port" "1235"
+    ask_number PORT "Port" "8731"
     if (( 10#$PORT >= 1024 && 10#$PORT <= 65535 )); then
         break
     fi

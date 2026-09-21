@@ -60,7 +60,7 @@ HALOGEN_REASONING_EFFORT=medium ./run.sh
 ```bash
 # Server
 BIND_HOST=127.0.0.1
-PORT=1235
+PORT=8731
 
 # Weights
 MODELS_DIR=/home/you/models/halogen-models
@@ -74,7 +74,7 @@ HALOGEN_VISION_TOWER=1
 | Variable | Default | Meaning |
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
-| `PORT` | `1235` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). |
+| `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
 | `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
@@ -96,7 +96,7 @@ podman run --rm --name halogen-flash \
   --group-add keep-groups \
   --ipc=host \
   --ulimit memlock=-1:-1 \
-  -p 127.0.0.1:1235:8731 \
+  -p 127.0.0.1:8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
   [-e HALOGEN_VISION_TOWER=1] \
