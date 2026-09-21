@@ -287,7 +287,7 @@ while true; do
         fi
         echo "  Choose a value between 1 and 8." >&2
     else
-        echo "  Please choose a number between 1 and 64." >&2
+        echo "  Please choose a number between 1 and 64 (1-8 recommended)." >&2
     fi
 done
 echo ""
