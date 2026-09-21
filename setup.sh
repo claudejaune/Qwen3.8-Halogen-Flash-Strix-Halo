@@ -294,24 +294,47 @@ echo ""
 
 # ── Step 5: Weights location ─────────────────────────────────────────────────
 info "=== Step 5: Weights ==="
-echo "  Directory the weights (~118 GiB) are downloaded into on first"
-echo "  ./run.sh. Press Enter for the default ($MODELS_DIR, the same path the"
-echo "  upstream quickstart uses). It must be an absolute path."
-ask MODELS_DIR "Weights directory" "$MODELS_DIR"
-# Expand a leading ~ the shell does not expand on read input.
-if [[ "${MODELS_DIR:0:1}" == "~" ]]; then
-    MODELS_DIR="${MODELS_DIR/#\~/$HOME}"
-fi
-if [[ ! "$MODELS_DIR" = /* ]]; then
-    err "The weights directory must be an absolute path, got '$MODELS_DIR'."
-fi
-if [[ ! -d "$MODELS_DIR" ]]; then
+# The fallback default used when the user asks to choose a different
+# directory after the current one turned out not to exist.
+DEFAULT_MODELS_DIR="$HOME/halogen-models"
+FALLBACK_DEFAULT=false
+DIR_ATTEMPTS=0
+while true; do
+    echo "  Directory the weights (~118 GiB) are downloaded into on first"
+    echo "  ./run.sh. Press Enter for the default ($MODELS_DIR)."
+    echo "  It must be an absolute path."
+    if [[ "$FALLBACK_DEFAULT" == "true" ]]; then
+        ask MODELS_DIR "Weights directory" "$DEFAULT_MODELS_DIR"
+    else
+        ask MODELS_DIR "Weights directory" "$MODELS_DIR"
+    fi
+    FALLBACK_DEFAULT=false
+    # Expand a leading ~ the shell does not expand on read input.
+    if [[ "${MODELS_DIR:0:1}" == "~" ]]; then
+        MODELS_DIR="${MODELS_DIR/#\~/$HOME}"
+    fi
+    if [[ ! "$MODELS_DIR" = /* ]]; then
+        # Bounded retries: an exhausted stdin (Ctrl-D) would otherwise feed
+        # the same invalid default forever.
+        DIR_ATTEMPTS=$((DIR_ATTEMPTS + 1))
+        if (( DIR_ATTEMPTS >= 5 )); then
+            err "Too many invalid directory choices. Re-run ./setup.sh."
+        fi
+        echo "  The weights directory must be an absolute path, got '$MODELS_DIR'." >&2
+        continue
+    fi
+    DIR_ATTEMPTS=0
+    if [[ -d "$MODELS_DIR" ]]; then
+        break
+    fi
     MODELS_DIR_PENDING=true
     echo ""
     echo "  $MODELS_DIR needs to exist for the script to run."
     echo ""
     echo "  1) Yes, create the directory"
-    echo "  2) Exit setup"
+    echo "  2) Choose a different directory"
+    echo "  3) Exit setup"
+    dir_ok=false
     while true; do
         read -rp "Choice [1]: " dir_choice || dir_choice=""
         dir_choice="${dir_choice:-1}"
@@ -320,6 +343,7 @@ if [[ ! -d "$MODELS_DIR" ]]; then
                 if mkdir -p "$MODELS_DIR"; then
                     ok "Created $MODELS_DIR"
                     MODELS_DIR_PENDING=false
+                    dir_ok=true
                 else
                     warn "Could not create $MODELS_DIR."
                     warn "The weights directory must exist for the server to run."
@@ -328,16 +352,23 @@ if [[ ! -d "$MODELS_DIR" ]]; then
                 break
                 ;;
             2)
+                FALLBACK_DEFAULT=true
+                break
+                ;;
+            3)
                 warn "The weights directory ($MODELS_DIR) must exist for the"
                 warn "server to run. Create it and re-run ./setup.sh."
                 exit 130
                 ;;
             *)
-                echo "  Please choose 1 or 2." >&2
+                echo "  Please choose 1, 2 or 3." >&2
                 ;;
         esac
     done
-fi
+    if [[ "$dir_ok" == "true" ]]; then
+        break
+    fi
+done
 
 avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
 if [[ -z "$avail" ]]; then
