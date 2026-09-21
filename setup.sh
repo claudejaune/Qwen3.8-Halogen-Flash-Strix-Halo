@@ -371,24 +371,11 @@ while true; do
     fi
 done
 
-avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
-if [[ -z "$avail" ]]; then
-    warn "Could not check free disk space for $MODELS_DIR."
-elif (( avail < DISK_MIN_GIB )); then
-    err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The weights
-are ~118 GiB and download on first ./run.sh; need at least ${DISK_MIN_GIB} GiB
-(${DISK_REC_GIB} GiB recommended)."
-elif (( avail < DISK_REC_GIB )); then
-    warn "Only ${avail} GiB free. ${DISK_REC_GIB} GiB is recommended so the disk isn't packed full."
-    if ! ask_yes_no "  Continue anyway?" n; then
-        err "Stopped. config.env was not written. Free some space and re-run ./setup.sh."
-    fi
-fi
-
-# Query the repo's CURRENT sha256 for the checkpoint. Written into config.env
-# so refresh.sh can tell "damaged file" from "upstream shipped a new version".
-# Best effort: offline setup leaves it unset (commented) and everything still
-# works.
+# Query the repo's CURRENT sha256 for the checkpoint FIRST — it decides
+# whether an existing checkpoint is usable as-is (no download, so no
+# disk-space requirement). Written into config.env so refresh.sh can tell
+# "damaged file" from "upstream shipped a new version". Best effort: an
+# offline setup leaves it unset (commented) and everything still works.
 info "Checking the HF repo for the checkpoint's current sha256..."
 REMOTE_CK_SHA=""
 if REMOTE_CK_SHA="$(hf_remote_sha256 "$CHECKPOINT_FILE")"; then
@@ -407,6 +394,66 @@ if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
     fi
 fi
 echo ""
+
+# ── Existing checkpoint check ────────────────────────────────────────────────
+# A verified-complete checkpoint means ./run.sh downloads nothing, so the
+# ~120 GiB free-disk requirement does not apply.
+CK_PATH="$MODELS_DIR/$CHECKPOINT_FILE"
+CK_NEEDS_DOWNLOAD=true
+size_gib() {
+    stat -c '%s' "$1" 2>/dev/null | awk '{printf "%.0f", $1 / 1073741824}'
+}
+
+if [[ -f "$CK_PATH" ]]; then
+    echo "  A checkpoint already exists: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
+    if [[ -n "$REMOTE_CK_SHA" ]]; then
+        if ask_yes_no "  Verify it against the repo's sha256 (a few minutes)?" y; then
+            info "Computing sha256 (a few minutes on NVMe)..."
+            LOCAL_SHA="$(sha256sum "$CK_PATH" 2>/dev/null | cut -d' ' -f1)" || LOCAL_SHA=""
+            if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
+                ok "The checkpoint on disk IS the current repo version."
+                CK_NEEDS_DOWNLOAD=false
+            else
+                warn "The file on disk does not match the repo (expected $REMOTE_CK_SHA,"
+                warn "got ${LOCAL_SHA:-<hash failed>}). It will be re-downloaded."
+            fi
+        else
+            warn "Verification skipped — judging completeness by size alone."
+        fi
+    fi
+    if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
+        CK_GIB="$(size_gib "$CK_PATH")"
+        if (( CK_GIB >= 110 )); then
+            info "The file is ~${CK_GIB} GiB — treated as complete (unverified)."
+            CK_NEEDS_DOWNLOAD=false
+        else
+            warn "The file is only ~${CK_GIB} GiB (expect ~115) — incomplete."
+            info "It will be re-downloaded on first ./run.sh."
+        fi
+    fi
+else
+    info "No checkpoint on disk yet — downloads on first ./run.sh."
+fi
+echo ""
+
+# ── Disk-space gate (only when a download is actually needed) ────────────────
+if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
+    avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
+    if [[ -z "$avail" ]]; then
+        warn "Could not check free disk space for $MODELS_DIR."
+    elif (( avail < DISK_MIN_GIB )); then
+        err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The weights
+are ~118 GiB and download on first ./run.sh; need at least ${DISK_MIN_GIB} GiB
+(${DISK_REC_GIB} GiB recommended)."
+    elif (( avail < DISK_REC_GIB )); then
+        warn "Only ${avail} GiB free. ${DISK_REC_GIB} GiB is recommended so the disk isn't packed full."
+        if ! ask_yes_no "  Continue anyway?" n; then
+            err "Stopped. config.env was not written. Free some space and re-run ./setup.sh."
+        fi
+    fi
+else
+    ok "Checkpoint already in place — no download needed, disk-space check skipped."
+fi
 
 # ── Write config ─────────────────────────────────────────────────────────────
 info "=== Writing config ==="
