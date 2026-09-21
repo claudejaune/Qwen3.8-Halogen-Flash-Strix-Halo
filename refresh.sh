@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
-DEFAULT_MODELS_DIR="$HOME/halogen-models"
+DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 HASH_FILE="checkpoint.sha256"

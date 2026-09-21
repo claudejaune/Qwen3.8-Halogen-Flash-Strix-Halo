@@ -130,21 +130,21 @@ checkpoint the container **exits at startup**. Fixes, in order:
 - `./refresh.sh` — offers to download it (0.84 GiB, sha256-verified against
   the repo's live hash).
 - Re-run `./setup.sh` — it offers the same fetch.
-- By hand: `hf download peonist-ai/halogen-qwen3.8-flash-next qwen38-flash-next-vision.hgn --local-dir ~/halogen-models`
+- By hand: `hf download peonist-ai/halogen-qwen3.8-flash-next qwen38-flash-next-vision.hgn --local-dir ~/models/halogen-models`
 
 An `http(s)` image URL is refused by design — send `data:` URLs or bare
 base64. `GET /health` reports whether images are accepted and why not.
 
 ## Weights download problems
 
-- First start fetches ~118 GiB into `~/halogen-models`. Interrupted
+- First start fetches ~118 GiB into `~/models/halogen-models`. Interrupted
   transfers resume on the next `./run.sh`.
 - A truncated tree fails inside the container before the engine loads —
   delete the incomplete files and run again.
 - The 115 GiB checkpoint is never re-fetched for a new image tag; only the
   2.4 GiB sidecar can refresh.
 - To fetch the weights yourself instead (container stays offline):
-  `hf download peonist-ai/halogen-qwen3.8-flash-next --local-dir ~/halogen-models`
+  `hf download peonist-ai/halogen-qwen3.8-flash-next --local-dir ~/models/halogen-models`
 
 ## Slow image processing
 

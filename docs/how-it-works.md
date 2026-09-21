@@ -63,7 +63,7 @@ BIND_HOST=127.0.0.1
 PORT=1235
 
 # Weights
-MODELS_DIR=/home/you/halogen-models
+MODELS_DIR=/home/you/models/halogen-models
 
 # Engine
 HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.11.5
@@ -76,7 +76,7 @@ HALOGEN_VISION_TOWER=1
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
 | `PORT` | `1235` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). |
-| `MODELS_DIR` | `~/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
+| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
@@ -102,7 +102,7 @@ podman run --rm --name halogen-flash \
   -e HALOGEN_KV_SLOTS=4 \
   [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=medium] \
-  -v ~/halogen-models:/models \
+  -v ~/models/halogen-models:/models \
   ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 ```
 

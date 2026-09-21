@@ -58,7 +58,7 @@ vision sidecar (which the engine never downloads itself).
 2. Kernel boot params: prints exact commands if yours need changing (reboot required)
 3. Vision on/off
 4. Parallel slots (concurrent requests; above 8 asks for explicit confirmation)
-5. Weights directory (default `~/halogen-models`, preserved across re-runs)
+5. Weights directory (default `~/models/halogen-models`, preserved across re-runs)
 
 The port is always a non-root port (1024-65535) — ports 1-1023 are never
 offered.

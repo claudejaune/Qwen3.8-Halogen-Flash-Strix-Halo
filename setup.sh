@@ -39,7 +39,7 @@ on_interrupt() {
 trap on_interrupt INT
 
 DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
-MODELS_DIR="$HOME/halogen-models"
+MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 DISK_MIN_GIB=120
@@ -296,7 +296,7 @@ echo ""
 info "=== Step 5: Weights ==="
 # The fallback default used when the user asks to choose a different
 # directory after the current one turned out not to exist.
-DEFAULT_MODELS_DIR="$HOME/halogen-models"
+DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
 FALLBACK_DEFAULT=false
 DIR_ATTEMPTS=0
 while true; do
