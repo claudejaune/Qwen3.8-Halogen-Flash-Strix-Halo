@@ -300,14 +300,15 @@ DEFAULT_MODELS_DIR="$HOME/halogen-models"
 FALLBACK_DEFAULT=false
 DIR_ATTEMPTS=0
 while true; do
-    echo "  Directory the weights (~118 GiB) are downloaded into on first"
-    echo "  ./run.sh. Press Enter for the default ($MODELS_DIR)."
-    echo "  It must be an absolute path."
     if [[ "$FALLBACK_DEFAULT" == "true" ]]; then
-        ask MODELS_DIR "Weights directory" "$DEFAULT_MODELS_DIR"
+        THIS_DEFAULT="$DEFAULT_MODELS_DIR"
     else
-        ask MODELS_DIR "Weights directory" "$MODELS_DIR"
+        THIS_DEFAULT="$MODELS_DIR"
     fi
+    echo "  Directory the weights (~118 GiB) are downloaded into on first"
+    echo "  ./run.sh. Press Enter for the default ($THIS_DEFAULT)."
+    echo "  It must be an absolute path."
+    ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
     FALLBACK_DEFAULT=false
     # Expand a leading ~ the shell does not expand on read input.
     if [[ "${MODELS_DIR:0:1}" == "~" ]]; then
