@@ -234,7 +234,7 @@ fi
 if have tuned-adm; then
     CURRENT_PROFILE=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || echo "unknown")
     if [[ "$CURRENT_PROFILE" != "accelerator-performance" ]]; then
-        if ask_yes_no "Set tuned profile to accelerator-performance?" y; then
+        if ask_yes_no 'Set tuned profile to "accelerator-performance"? (Boosts performance)' y; then
             if sudo tuned-adm profile accelerator-performance 2>/dev/null; then
                 ok "tuned profile set (no reboot needed)."
             else
