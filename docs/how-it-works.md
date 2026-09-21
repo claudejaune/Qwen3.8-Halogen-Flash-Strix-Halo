@@ -35,6 +35,12 @@ This repo keeps that as the only weight path — there is no GGUF option here.
 6. **Write config.env** — before anything is downloaded
 7. **Image pull** — offers to `podman pull` now, or leaves it to `run.sh`
 
+**Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
+config is written, nothing has changed — run `./setup.sh` again to complete
+setup. After it is written, the message says the config was saved and a
+re-run of `./setup.sh` is still needed for a complete setup (the fetch
+phase's questions are all answered before any download starts).
+
 ## config.env reference
 
 `config.env` is a plain `KEY=value` data file that `run.sh` reads. Values are

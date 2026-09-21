@@ -42,6 +42,23 @@ if [[ "${BIND_HOST}" != "127.0.0.1" && "${BIND_HOST}" != "0.0.0.0" ]]; then
     exit 1
 fi
 
+# Value ranges — same rules setup.sh enforces, for a hand-edited config
+if (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
+    echo "Error: PORT must be between 1 and 65535, got '$PORT' in config.env." >&2
+    exit 1
+fi
+if [[ -n "${HALOGEN_KV_SLOTS:-}" ]] && (( 10#$HALOGEN_KV_SLOTS < 1 || 10#$HALOGEN_KV_SLOTS > 64 )); then
+    echo "Error: HALOGEN_KV_SLOTS must be between 1 and 64, got '$HALOGEN_KV_SLOTS' in config.env." >&2
+    exit 1
+fi
+if [[ -n "${HALOGEN_KV_SLOTS:-}" ]] && (( 10#$HALOGEN_KV_SLOTS > 8 )); then
+    warn "More than 8 slots: past 8 total throughput stops growing — each stream gets slower."
+fi
+if [[ -n "${HALOGEN_KV_POOL_POSITIONS:-}" ]] && (( 10#$HALOGEN_KV_POOL_POSITIONS < 1 )); then
+    echo "Error: HALOGEN_KV_POOL_POSITIONS must be at least 1, got '$HALOGEN_KV_POOL_POSITIONS' in config.env." >&2
+    exit 1
+fi
+
 if [[ ! -d "$MODELS_DIR" ]]; then
     echo "Error: weights directory not found: $MODELS_DIR" >&2
     echo "Re-run ./setup.sh to create it." >&2

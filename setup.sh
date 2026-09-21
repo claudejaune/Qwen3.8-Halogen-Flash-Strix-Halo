@@ -16,6 +16,24 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 
 require_not_root
 
+# Ctrl-C: say where things stand and how to finish. The config is written
+# only after every question, so the flag distinguishes "interrupted during
+# questions" from "interrupted during downloads".
+CONFIG_WRITTEN=false
+on_interrupt() {
+    echo ""
+    warn "Setup interrupted (Ctrl-C)."
+    if [[ "$CONFIG_WRITTEN" == "true" ]]; then
+        warn "Your config was saved to: $CONFIG_FILE"
+    else
+        warn "config.env was NOT written — nothing has changed."
+    fi
+    warn "A partially answered setup cannot run the server. Run ./setup.sh again"
+    warn "to complete it (you can keep answering the same answers)."
+    exit 130
+}
+trap on_interrupt INT
+
 DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
 MODELS_DIR="$HOME/halogen-models"
 CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
@@ -246,9 +264,19 @@ echo "  Conversations generating at once. Each stream runs at its own speed;"
 echo "  more streams trade per-stream speed for admitting more clients."
 echo "  Past 8 slots total throughput stops growing."
 echo ""
-ask_number HALOGEN_KV_SLOTS "Slots" "4"
-if (( 10#$HALOGEN_KV_SLOTS < 1 || 10#$HALOGEN_KV_SLOTS > 64 )); then
-    err "Slots must be between 1 and 64."
+while true; do
+    ask_number HALOGEN_KV_SLOTS "Slots" "4"
+    if (( 10#$HALOGEN_KV_SLOTS >= 1 )); then
+        break
+    fi
+    echo "  Slots must be at least 1 — zero is not a valid value." >&2
+done
+if (( 10#$HALOGEN_KV_SLOTS > 64 )); then
+    err "Slots must be at most 64 (the engine's own cap)."
+fi
+if (( 10#$HALOGEN_KV_SLOTS > 8 )); then
+    warn "More than 8 slots: past 8 a step takes two forwards and total"
+    warn "throughput stops growing — each stream only gets slower. Accepted anyway."
 fi
 echo ""
 echo "  The KV pool is the memory knob: positions resident across all"
@@ -260,6 +288,9 @@ ask HALOGEN_KV_POOL_POSITIONS "KV pool positions (empty = default)" ""
 if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]] && \
    ! [[ "$HALOGEN_KV_POOL_POSITIONS" =~ ^[0-9]+$ ]]; then
     err "KV pool positions must be a number or empty."
+fi
+if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]] && (( 10#$HALOGEN_KV_POOL_POSITIONS < 1 )); then
+    err "KV pool positions must be at least 1 — zero is not a valid value."
 fi
 echo ""
 
@@ -371,6 +402,7 @@ cat >> "$CONFIG_FILE" <<CONFIG_EOF
 CONFIG_EOF
 
 ok "Config written to: $CONFIG_FILE"
+CONFIG_WRITTEN=true
 echo ""
 
 # ── Fetch phase: image + vision sidecar (checkpoint downloads on first run.sh)
