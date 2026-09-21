@@ -43,8 +43,8 @@ if [[ "${BIND_HOST}" != "127.0.0.1" && "${BIND_HOST}" != "0.0.0.0" ]]; then
 fi
 
 # Value ranges — same rules setup.sh enforces, for a hand-edited config
-if (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
-    echo "Error: PORT must be between 1 and 65535, got '$PORT' in config.env." >&2
+if (( 10#$PORT < 1024 || 10#$PORT > 65535 )); then
+    echo "Error: PORT must be between 1024 and 65535 (root ports 1-1023 are never used), got '$PORT' in config.env." >&2
     exit 1
 fi
 if [[ -n "${HALOGEN_KV_SLOTS:-}" ]] && (( 10#$HALOGEN_KV_SLOTS < 1 || 10#$HALOGEN_KV_SLOTS > 64 )); then

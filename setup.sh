@@ -183,10 +183,14 @@ else
     ok "Localhost only. Other machines need an SSH tunnel."
 fi
 
-ask_number PORT "Port" "1235"
-if (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
-    err "Port must be between 1 and 65535."
-fi
+while true; do
+    ask_number PORT "Port" "1235"
+    if (( 10#$PORT >= 1024 && 10#$PORT <= 65535 )); then
+        break
+    fi
+    echo "  Ports 1-1023 are root ports — this server never uses them." >&2
+    echo "  Choose a port between 1024 and 65535." >&2
+done
 echo ""
 
 # ── Step 2: Kernel params notice ─────────────────────────────────────────────
@@ -266,32 +270,22 @@ echo "  Past 8 slots total throughput stops growing."
 echo ""
 while true; do
     ask_number HALOGEN_KV_SLOTS "Slots" "4"
-    if (( 10#$HALOGEN_KV_SLOTS >= 1 )); then
-        break
+    if (( 10#$HALOGEN_KV_SLOTS >= 1 && 10#$HALOGEN_KV_SLOTS <= 64 )); then
+        if (( 10#$HALOGEN_KV_SLOTS <= 8 )); then
+            break
+        fi
+        echo ""
+        warn "More than 8 slots is NOT recommended: past 8 a step takes two"
+        warn "forwards and total throughput stops growing — every stream only"
+        warn "gets slower. Nothing above 8 is faster in total."
+        if ask_yes_no "  Proceed anyway (NOT recommended)?" n; then
+            break
+        fi
+        echo "  Choose a value between 1 and 8." >&2
+    else
+        echo "  Please choose a number between 1 and 64." >&2
     fi
-    echo "  Slots must be at least 1 — zero is not a valid value." >&2
 done
-if (( 10#$HALOGEN_KV_SLOTS > 64 )); then
-    err "Slots must be at most 64 (the engine's own cap)."
-fi
-if (( 10#$HALOGEN_KV_SLOTS > 8 )); then
-    warn "More than 8 slots: past 8 a step takes two forwards and total"
-    warn "throughput stops growing — each stream only gets slower. Accepted anyway."
-fi
-echo ""
-echo "  The KV pool is the memory knob: positions resident across all"
-echo "  conversations (~29.5 KiB each). Leave empty to use the image default"
-echo "  (2x the native 262144-token context, self-sized to the machine)."
-echo "  262144 is the small layout if startup ever reports out of memory."
-echo ""
-ask HALOGEN_KV_POOL_POSITIONS "KV pool positions (empty = default)" ""
-if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]] && \
-   ! [[ "$HALOGEN_KV_POOL_POSITIONS" =~ ^[0-9]+$ ]]; then
-    err "KV pool positions must be a number or empty."
-fi
-if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]] && (( 10#$HALOGEN_KV_POOL_POSITIONS < 1 )); then
-    err "KV pool positions must be at least 1 — zero is not a valid value."
-fi
 echo ""
 
 # ── Step 5: Weights location ─────────────────────────────────────────────────
@@ -376,9 +370,6 @@ CONFIG_EOF
 
 if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
     echo "HALOGEN_VISION_TOWER=1" >> "$CONFIG_FILE"
-fi
-if [[ -n "$HALOGEN_KV_POOL_POSITIONS" ]]; then
-    echo "HALOGEN_KV_POOL_POSITIONS=$HALOGEN_KV_POOL_POSITIONS" >> "$CONFIG_FILE"
 fi
 
 # Integrity: the sha256 the HF repo currently lists. refresh.sh compares it

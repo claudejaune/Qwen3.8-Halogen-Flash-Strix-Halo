@@ -57,9 +57,11 @@ vision sidecar (which the engine never downloads itself).
    authentication**, so a LAN server is open to your whole network
 2. Kernel boot params: prints exact commands if yours need changing (reboot required)
 3. Vision on/off
-4. Parallel slots (concurrent requests)
-5. Optional: KV pool size (the memory knob; leave empty for the default)
-6. Weights directory (default `~/halogen-models`, preserved across re-runs)
+4. Parallel slots (concurrent requests; above 8 asks for explicit confirmation)
+5. Weights directory (default `~/halogen-models`, preserved across re-runs)
+
+The port is always a non-root port (1024-65535) — ports 1-1023 are never
+offered.
 
 No model choice: this repo serves one engine and one checkpoint. No MTP
 question: speculative decoding is always on by default. No storage question:

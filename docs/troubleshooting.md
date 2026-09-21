@@ -17,20 +17,19 @@ dmalloc: FAILED requesting 0.750 GiB after 39.703 GiB in 647 allocations (out of
 HIP ... out of memory
 ```
 
-means the KV pool did not fit. **`HALOGEN_KV_SLOTS` will not fix it** — the
-slots share one pool and each costs only ~115 MB. The knob is the pool:
+means the KV pool did not fit. **More slots will not fix it** — the slots
+share one pool and each costs only ~115 MB. The knob is the pool:
 
 ```bash
-# In config.env:
-HALOGEN_KV_POOL_POSITIONS=262144
+# In config.env — the small layout, still serves four conversations:
+HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144
 ```
 
-That is the small layout and still serves four conversations. If it still
-will not start, add `HALOGEN_MAX_TOK=16384` to `HALOGEN_EXTRA_ENV` in
-config.env (gives back ~8.8 GiB for ~9% of prefill speed):
+If it still will not start, add `HALOGEN_MAX_TOK=16384` to
+`HALOGEN_EXTRA_ENV` as well (gives back ~8.8 GiB for ~9% of prefill speed):
 
 ```bash
-HALOGEN_EXTRA_ENV=HALOGEN_MAX_TOK=16384
+HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144 HALOGEN_MAX_TOK=16384
 ```
 
 By default the server measures the device budget at startup and lowers the
@@ -45,7 +44,7 @@ so RAM the KV pool takes is RAM that table loses. The levers:
 
 ```bash
 # In config.env — a smaller pool leaves more file cache:
-HALOGEN_KV_POOL_POSITIONS=262144
+HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144
 
 # Or let the server choose a smaller pool itself:
 HALOGEN_EXTRA_ENV=HALOGEN_HOST_RESERVE_GIB=32
@@ -64,8 +63,8 @@ core with no disk activity. It is not a crash and needs no restart.
 
 - Read the startup line `host memory left for everything else` — and believe
   it over `free`, which overstates free memory by ~68 GiB.
-- Give the machine other workloads sparingly, or lower
-  `HALOGEN_KV_POOL_POSITIONS`.
+- Give the machine other workloads sparingly, or shrink the KV pool
+  (`HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144` in config.env).
 
 ## Kernel params not applied
 

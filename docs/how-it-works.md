@@ -28,7 +28,7 @@ This repo keeps that as the only weight path — there is no GGUF option here.
 3. **Kernel params** — checks the boot command line against the set halogen
    was measured on and prints grubby/grub/systemd-boot commands if something
    is missing; never modifies the bootloader itself
-4. **Questions** — network binding, port, vision, slots, optional KV pool
+4. **Questions** — network binding, port, vision, slots
 5. **Disk check** — the weights are ~118 GiB and download on first `run.sh`;
    the fetch refuses nothing itself, so setup warns under 130 GiB free and
    stops under 120 GiB
@@ -81,12 +81,11 @@ HALOGEN_VISION_TOWER=1
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
-| `HALOGEN_KV_POOL_POSITIONS` | *(unset = image default)* | The memory knob: KV positions resident across all conversations (~29.5 KiB each). The image default is 2x the native context and the server lowers it itself if it will not fit. `262144` is the small layout. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
 | `HALOGEN_REASONING_EFFORT` | `medium` (set by setup) | Reasoning effort for a request that names none: `minimal`, `low`, `medium`, `high` or `xhigh`. Unset, the engine uses the chat template's own `xhigh`, which thinks for hundreds to thousands of tokens on an agentic prompt — that spend comes out of the request's token budget. A request that sends `reasoning_effort` wins; the environment overrides config.env for a single start (`HALOGEN_REASONING_EFFORT=low ./run.sh`); `/health` reports the effective default. |
 | `HALOGEN_CTX` | *(unset = 262144)* | Advanced: the most context ONE request may use. The native context is the default; there is normally no reason to set this. |
 | `HALOGEN_MODEL_ID` | *(unset)* | Advanced: the model id at `/v1/models`. A label; useful to run two stacks on one host. |
-| `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings). |
+| `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings, or `HALOGEN_KV_POOL_POSITIONS=262144` to shrink the KV pool). |
 
 ## What run.sh starts
 
@@ -102,7 +101,7 @@ podman run --rm --name halogen-flash \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
   [-e HALOGEN_VISION_TOWER=1] \
-  [-e HALOGEN_KV_POOL_POSITIONS=...] \
+  [-e HALOGEN_REASONING_EFFORT=medium] \
   -v ~/halogen-models:/models \
   ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 ```
@@ -163,8 +162,9 @@ Once loaded, this server holds most of a 128 GB host:
   minutes-long stalls that look like a hang.
 
 The startup line `host memory left for everything else` is the truth. The
-levers, in order: fewer concurrent needs (`HALOGEN_KV_POOL_POSITIONS`),
-fewer slots, or a machine of its own. `HALOGEN_FLASH_PIN_TRUNK=0` gives
+levers, in order: a smaller KV pool (pass
+`HALOGEN_KV_POOL_POSITIONS=262144` through `HALOGEN_EXTRA_ENV`), fewer
+slots, or a machine of its own. `HALOGEN_FLASH_PIN_TRUNK=0` gives
 memory back and costs several times the decode speed — a last resort.
 
 ## What happened to the llama.cpp options
