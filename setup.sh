@@ -30,6 +30,10 @@ on_interrupt() {
     fi
     warn "A partially answered setup cannot run the server. Run ./setup.sh again"
     warn "to complete it (you can keep answering the same answers)."
+    if [[ "${MODELS_DIR_PENDING:-false}" == "true" ]]; then
+        warn "Remember: the weights directory (${MODELS_DIR:-<unset>}) must exist"
+        warn "before the server can run."
+    fi
     exit 130
 }
 trap on_interrupt INT
@@ -302,10 +306,37 @@ if [[ ! "$MODELS_DIR" = /* ]]; then
     err "The weights directory must be an absolute path, got '$MODELS_DIR'."
 fi
 if [[ ! -d "$MODELS_DIR" ]]; then
-    if ask_yes_no "  Create the weights directory $MODELS_DIR?" y; then
-        mkdir -p "$MODELS_DIR"
-        ok "Created $MODELS_DIR"
-    fi
+    MODELS_DIR_PENDING=true
+    echo ""
+    echo "  $MODELS_DIR needs to exist for the script to run."
+    echo ""
+    echo "  1) Yes, create the directory"
+    echo "  2) Exit setup"
+    while true; do
+        read -rp "Choice [1]: " dir_choice || dir_choice=""
+        dir_choice="${dir_choice:-1}"
+        case "$dir_choice" in
+            1)
+                if mkdir -p "$MODELS_DIR"; then
+                    ok "Created $MODELS_DIR"
+                    MODELS_DIR_PENDING=false
+                else
+                    warn "Could not create $MODELS_DIR."
+                    warn "The weights directory must exist for the server to run."
+                    err "Exiting setup. Create it yourself and re-run ./setup.sh."
+                fi
+                break
+                ;;
+            2)
+                warn "The weights directory ($MODELS_DIR) must exist for the"
+                warn "server to run. Create it and re-run ./setup.sh."
+                exit 130
+                ;;
+            *)
+                echo "  Please choose 1 or 2." >&2
+                ;;
+        esac
+    done
 fi
 
 avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
