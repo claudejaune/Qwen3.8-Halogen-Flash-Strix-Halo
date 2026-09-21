@@ -473,9 +473,9 @@ MODELS_DIR=$MODELS_DIR
 # Engine
 HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
-# Reasoning effort for requests that send none (the chat template's own
-# default is xhigh, which thinks for hundreds to thousands of tokens).
-HALOGEN_REASONING_EFFORT=medium
+# Reasoning effort for requests that send none. Unset = the model's own
+# default (xhigh, recommended by the model card). Uncomment to change:
+# HALOGEN_REASONING_EFFORT=medium
 CONFIG_EOF
 
 if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
