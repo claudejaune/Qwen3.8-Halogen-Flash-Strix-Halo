@@ -254,11 +254,9 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
   sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
   sudo reboot"
     elif [[ -f /etc/default/grub ]]; then
-        BOOT_INSTRUCTIONS="  # Add to GRUB_CMDLINE_LINUX in /etc/default/grub:
-  #   $KERNEL_ARGS
-  #
-  # Then rebuild and reboot:
-  sudo update-grub 2>/dev/null || sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+        BOOT_INSTRUCTIONS="  # Ubuntu/Debian (GRUB): one command appends the missing params and rebuilds
+  # grub.cfg (it appends — run it once):
+  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && { sudo update-grub 2>/dev/null || sudo grub2-mkconfig -o /boot/grub2/grub.cfg; }
   sudo reboot"
     else
         BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
