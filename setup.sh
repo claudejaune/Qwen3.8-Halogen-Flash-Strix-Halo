@@ -42,7 +42,7 @@ DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
 MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"
-DISK_MIN_GIB=120
+DISK_MIN_GIB=125
 DISK_REC_GIB=130
 
 # Preserve an existing weights location across setup runs (extracted by grep
@@ -437,7 +437,7 @@ echo ""
 
 # ── Existing checkpoint check ────────────────────────────────────────────────
 # A verified-complete checkpoint means ./run.sh downloads nothing, so the
-# ~120 GiB free-disk requirement does not apply.
+# ~125 GiB free-disk requirement does not apply.
 CK_PATH="$MODELS_DIR/$CHECKPOINT_FILE"
 CK_NEEDS_DOWNLOAD=true
 size_gib() {
