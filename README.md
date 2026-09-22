@@ -9,7 +9,7 @@ No prior experience with running local AI models needed. The scripts guide you t
 ### Prerequisites
 
 - AMD Strix Halo with 128 GB RAM
-- 130 GB free disk minimum
+- 130 GiB free disk minimum
 - Kernel 7.0 or newer
 - `podman`:
   - Fedora 42+: `sudo dnf install -y podman`

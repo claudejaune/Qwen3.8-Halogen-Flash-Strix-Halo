@@ -436,7 +436,7 @@ echo ""
 
 # ── Existing checkpoint check ────────────────────────────────────────────────
 # A verified-complete checkpoint means ./run.sh downloads nothing, so the
-# ~125 GiB free-disk requirement does not apply.
+# ~130 GiB free-disk requirement does not apply.
 CK_PATH="$MODELS_DIR/$CHECKPOINT_FILE"
 CK_NEEDS_DOWNLOAD=true
 size_gib() {
