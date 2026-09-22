@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # run.sh — Start Qwen3.8-Flash-Next via halogen-flash-server using config.env.
 # Runs in the foreground. Use stop.sh from another terminal to stop it.
+#
+# Usage: ./run.sh [--log]
+#   --log   also save everything the engine prints to logs/run-<timestamp>.log
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,6 +11,20 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
 DOWNLOAD_REPO="peonist-ai/halogen-qwen3.8-flash-next"
 DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
+
+# ── Flags ────────────────────────────────────────────────────────────────────
+# --log duplicates everything the engine prints into logs/. Off by default:
+# engine output is large and a normal start needs no record of it.
+LOG=false
+for arg in "$@"; do
+    case "$arg" in
+        --log) LOG=true ;;
+        *)
+            echo "Error: unknown option: $arg (usage: ./run.sh [--log])" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: config.env not found. Run ./setup.sh first." >&2
@@ -182,5 +199,17 @@ echo ""
 echo "============================================"
 echo ""
 
-# Run in foreground
+# Run in foreground. With --log, everything the engine prints is also kept in
+# a file — the whole story for anyone debugging a bad start.
+if [[ "$LOG" == "true" ]]; then
+    mkdir -p "$SCRIPT_DIR/logs"
+    LOG_FILE="$SCRIPT_DIR/logs/run-$(date +%Y-%m-%d-%H-%M-%S).log"
+    info "Also writing output to: $LOG_FILE"
+    status=0
+    "${CMD[@]}" 2>&1 | tee "$LOG_FILE" || status=$?
+    echo ""
+    info "Log saved: $LOG_FILE"
+    exit "$status"
+fi
+
 exec "${CMD[@]}"
