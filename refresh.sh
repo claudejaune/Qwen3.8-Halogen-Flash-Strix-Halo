@@ -154,7 +154,7 @@ offer_update_flow() {
     echo "    $CK_PATH"
     echo "    $CK_OVERLAY"
     echo "    $VISION_PATH (if present)"
-    echo "  — and ./run.sh re-downloads (~118 GiB, resumable). Other files"
+    echo "  — and ./run.sh re-downloads (~122 GiB, resumable). Other files"
     echo "  (tokenizer, any other models) are left alone."
     if ! ask_yes_no "  Stop the server and delete them now?" n; then
         echo "  Kept. Nothing deleted. Re-run ./refresh.sh when ready, or delete by hand."
@@ -182,7 +182,7 @@ offer_update_flow() {
         fi
     fi
     echo ""
-    echo "  Now run ./run.sh — it downloads the new version (~118 GiB)."
+    echo "  Now run ./run.sh — it downloads the new version (~122 GiB)."
 }
 
 info "Checking the HF repo for the checkpoint's current sha256..."
@@ -234,7 +234,7 @@ if [[ -n "$REMOTE_CK" ]]; then
         fi
     else
         warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~118 GiB, resumes if interrupted)."
+        echo "  First ./run.sh downloads it (~122 GiB, resumes if interrupted)."
     fi
 else
     # Offline (or no python3/curl): fall back to what we know locally.
@@ -268,7 +268,7 @@ else
         fi
     else
         warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~118 GiB, resumes if interrupted)."
+        echo "  First ./run.sh downloads it (~122 GiB, resumes if interrupted)."
     fi
 fi
 echo ""

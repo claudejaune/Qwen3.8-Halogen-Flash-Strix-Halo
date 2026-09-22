@@ -221,7 +221,7 @@ for entry in tree:
 # hf_fetch_file <filename> <expected-sha256> <dest-dir>
 # Downloads one small file from the weights repo and verifies its sha256.
 # Uses `hf download` when the CLI is present; otherwise curl with resume
-# (-C -). Only for small files (sidecars) — the ~118 GiB checkpoint is
+# (-C -). Only for small files (sidecars) — the ~122 GiB weights tree is
 # fetched by the container itself.
 hf_fetch_file() {
     local file="$1" expected="$2" dir="$3"

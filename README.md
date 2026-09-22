@@ -8,7 +8,7 @@ No prior experience with running local AI models needed. The scripts guide you t
 
 ### Prerequisites
 
-- AMD Strix Halo with 128 GB RAM
+- AMD Strix Halo with 128 GiB RAM
 - 130 GiB free disk minimum
 - Kernel 7.0 or newer
 - `podman`:

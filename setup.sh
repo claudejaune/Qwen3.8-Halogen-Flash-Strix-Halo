@@ -4,7 +4,7 @@
 # Writes config.env (plain KEY=value data) which run.sh reads. Re-running
 # setup.sh overwrites config.env with no backup.
 # The engine is halogen-flash-server: a prebuilt container image. No local
-# builds. Weights (~118 GiB) are fetched by the container itself on first
+# builds. Weights (~122 GiB) are fetched by the container itself on first
 # start (HALOGEN_DOWNLOAD); this script only checks that there is room.
 set -euo pipefail
 
@@ -183,7 +183,7 @@ cmdline_has() {
 }
 
 # The kernel command line halogen-flash-server was measured and shipped on.
-# ttm.pages_limit and amdgpu.gttsize are sizes tuned to a 128 GB machine.
+# ttm.pages_limit and amdgpu.gttsize are sizes tuned to a 128 GiB machine.
 EXPECTED_PARAMS=(
     "amd_iommu=off"
     "ttm.pages_limit=32505856"
@@ -344,7 +344,7 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Directory the weights (~118 GiB) are downloaded into on first"
+    echo "  Directory the weights (~122 GiB) are downloaded into on first"
     echo "  ./run.sh. Press Enter for the default ($THIS_DEFAULT)."
     echo "  It must be an absolute path."
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
@@ -595,7 +595,7 @@ echo " Setup complete!"
 echo "============================================"
 echo ""
 echo "  Image:      $DEFAULT_IMAGE"
-echo "  Weights:    $MODELS_DIR (downloaded on first run, ~118 GiB)"
+echo "  Weights:    $MODELS_DIR (downloaded on first run, ~122 GiB)"
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
 echo "  Bind:       $BIND_HOST:$PORT"
@@ -608,7 +608,7 @@ echo "  Start:      ./run.sh"
 echo "  Stop:       ./stop.sh"
 echo "  Update:     ./refresh.sh   (after git pull)"
 echo ""
-echo "  First start downloads the weights (~118 GiB, resumes if interrupted)"
+echo "  First start downloads the weights (~122 GiB, resumes if interrupted)"
 echo "  and then takes minutes to load them. Watch ./run.sh's output."
 echo ""
 

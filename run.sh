@@ -193,7 +193,7 @@ fi
 echo ""
 echo "  Stop:      ./stop.sh (from another terminal)"
 echo ""
-echo "  First start downloads the weights (~118 GiB, resumes if interrupted)"
+echo "  First start downloads the weights (~122 GiB, resumes if interrupted)"
 echo "  and loads them for minutes. Later starts skip both."
 echo ""
 echo "============================================"

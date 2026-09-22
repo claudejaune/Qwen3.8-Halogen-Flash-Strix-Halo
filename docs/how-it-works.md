@@ -39,7 +39,7 @@ except a stale sidecar; unset, the container opens no outbound connections.
 6. **Checkpoint state** — queries the HF repo for the checkpoint's current
    sha256 and, when a checkpoint is already on disk, verifies it against that
    hash (or judges completeness by size)
-7. **Disk check** — the weights are ~118 GiB and download on first `run.sh`;
+7. **Disk check** — the weights are ~122 GiB and download on first `run.sh`;
    the fetch refuses nothing itself, so setup stops under 130 GiB free.
    Skipped when the checkpoint on disk needs no download
 8. **Write config.env** — before anything is downloaded
@@ -87,7 +87,7 @@ HALOGEN_VISION_TOWER=1
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
-| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~118 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
+| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~122 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
@@ -135,12 +135,12 @@ podman run --rm --name halogen-flash \
 
 The engine runs on the amdgpu/KFD stack and its memory design depends on it:
 the checkpoint is mapped and registered with the GPU in place, never copied.
-The command line it was measured and shipped on (128 GB machine):
+The command line it was measured and shipped on (128 GiB machine):
 
 | Parameter | What it does |
 |---|---|
 | `amd_iommu=off` | Disables AMD IOMMU. Worth 13-16% of prefill. **Breaks NPU and DMA isolation.** |
-| `ttm.pages_limit=32505856` | Max 4 KiB pages the GPU can pin — the ~124 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GB machine.** |
+| `ttm.pages_limit=32505856` | Max 4 KiB pages the GPU can pin — the ~124 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GiB machine.** |
 | `amdgpu.gttsize=126976` | GTT size in MiB (~124 GiB), set to match the pages_limit ceiling. |
 | `amdgpu.vm_update_mode=0` | All GPU page-table updates in the kernel. |
 | `amdgpu.noretry=0` | Retry on page faults (the engine's memory design relies on it). |
