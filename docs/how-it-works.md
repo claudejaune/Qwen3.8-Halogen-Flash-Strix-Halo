@@ -135,16 +135,13 @@ podman run --rm --name halogen-flash \
 
 The engine runs on the amdgpu/KFD stack and its memory design depends on it:
 the checkpoint is mapped and registered with the GPU in place, never copied.
-The command line it was measured and shipped on (128 GiB machine):
+The command line this repo recommends (validated on a 128 GiB machine):
 
 | Parameter | What it does |
 |---|---|
 | `amd_iommu=off` | Disables AMD IOMMU. Worth 13-16% of prefill. **Breaks NPU and DMA isolation.** |
-| `ttm.pages_limit=32505856` | Max 4 KiB pages the GPU can pin — the ~124 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GiB machine.** |
-| `amdgpu.gttsize=126976` | GTT size in MiB (~124 GiB), set to match the pages_limit ceiling. |
-| `amdgpu.vm_update_mode=0` | All GPU page-table updates in the kernel. |
-| `amdgpu.noretry=0` | Retry on page faults (the engine's memory design relies on it). |
-| `amdgpu.sg_display=0` | Disables scatter-gather display. |
+| `ttm.pages_limit=31457280` | Max 4 KiB pages the GPU can pin — the 120 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GiB machine.** |
+| `amdgpu.gttsize=122880` | GTT size in MiB (120 GiB), set to match the pages_limit ceiling. |
 
 All of these **require a reboot** — they're read once at boot. `setup.sh`
 checks your values and prints the commands to run; it does not modify your

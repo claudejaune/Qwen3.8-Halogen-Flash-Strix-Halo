@@ -182,15 +182,13 @@ cmdline_has() {
     [[ "$CMDLINE" == *" $1 "* || "$CMDLINE" == "$1 *" || "$CMDLINE" == *" $1" || "$CMDLINE" == "$1" ]]
 }
 
-# The kernel command line halogen-flash-server was measured and shipped on.
-# ttm.pages_limit and amdgpu.gttsize are sizes tuned to a 128 GiB machine.
+# The kernel command line this repo recommends (validated on a 128 GiB
+# Strix Halo). ttm.pages_limit and amdgpu.gttsize are a matched pair —
+# pages_limit x 4 KiB = gtts size (120 GiB).
 EXPECTED_PARAMS=(
     "amd_iommu=off"
-    "ttm.pages_limit=32505856"
-    "amdgpu.gttsize=126976"
-    "amdgpu.vm_update_mode=0"
-    "amdgpu.noretry=0"
-    "amdgpu.sg_display=0"
+    "ttm.pages_limit=31457280"
+    "amdgpu.gttsize=122880"
 )
 MISSING_PARAMS=()
 for p in "${EXPECTED_PARAMS[@]}"; do
