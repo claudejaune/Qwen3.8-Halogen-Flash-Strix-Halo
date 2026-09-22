@@ -17,8 +17,6 @@ container's first start (`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next
 With that variable set and the volume writable, later starts re-fetch nothing
 except a stale sidecar; unset, the container opens no outbound connections.
 
-This repo keeps that as the only weight path — there is no GGUF option here.
-
 ## What setup.sh does
 
 1. **Podman check** — detects your distro and offers to install `podman` if missing
@@ -27,13 +25,27 @@ This repo keeps that as the only weight path — there is no GGUF option here.
    continue on an older running kernel
 3. **Kernel params** — checks the boot command line against the set halogen
    was measured on and prints grubby/grub/systemd-boot commands if something
-   is missing; never modifies the bootloader itself
-4. **Questions** — network binding, port, vision, slots
-5. **Disk check** — the weights are ~118 GiB and download on first `run.sh`;
+   is missing; never modifies the bootloader itself. Offers the tuned
+   `accelerator-performance` profile when `tuned-adm` is installed (runtime,
+   no reboot)
+4. **GPU access check** — confirms your user can open `/dev/kfd` and a
+   `/dev/dri/render*` node. If not, it offers AMD's fix
+   (`sudo usermod -aG render,video $USER`) and then stops: the new groups apply
+   only in a fresh session, so reboot (or log out and back in) and re-run
+   setup. This is deliberately before `run.sh` — a host that cannot reach the
+   GPU is not ready to serve.
+5. **Questions** — network binding, port, vision, slots, and the weights
+   directory (preserved across re-runs)
+6. **Checkpoint state** — queries the HF repo for the checkpoint's current
+   sha256 and, when a checkpoint is already on disk, verifies it against that
+   hash (or judges completeness by size)
+7. **Disk check** — the weights are ~118 GiB and download on first `run.sh`;
    the fetch refuses nothing itself, so setup warns under 130 GiB free and
-   stops under 120 GiB
-6. **Write config.env** — before anything is downloaded
-7. **Image pull** — offers to `podman pull` now, or leaves it to `run.sh`
+   stops under 120 GiB. Skipped when the checkpoint on disk needs no download
+8. **Write config.env** — before anything is downloaded
+9. **Fetch phase** — offers to `podman pull` the image now (or leaves it to
+   `run.sh`) and, with vision on, downloads and verifies the vision sidecar.
+   The checkpoint itself downloads on first `run.sh`
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, nothing has changed — run `./setup.sh` again to complete
@@ -80,11 +92,12 @@ HALOGEN_VISION_TOWER=1
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
+| `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
 | `HALOGEN_REASONING_EFFORT` | *(unset = the model's own `xhigh`, recommended by the model card)* | Reasoning effort for a request that names none: `minimal`, `low`, `medium`, `high` or `xhigh`. setup.sh leaves it commented in config.env; uncomment it (e.g. `medium` to think less) or override per start (`HALOGEN_REASONING_EFFORT=medium ./run.sh`). A request that sends `reasoning_effort` wins; `/health` reports the effective default. |
 | `HALOGEN_CTX` | *(unset = 262144)* | Advanced: the most context ONE request may use. The native context is the default; there is normally no reason to set this. |
 | `HALOGEN_MODEL_ID` | *(unset)* | Advanced: the model id at `/v1/models`. A label; useful to run two stacks on one host. |
-| `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings, or `HALOGEN_KV_POOL_POSITIONS=262144` to shrink the KV pool). |
+| `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings). |
 
 ## What run.sh starts
 
@@ -99,8 +112,9 @@ podman run --rm --name halogen-flash \
   -p 127.0.0.1:8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
-  [-e HALOGEN_VISION_TOWER=1] \
-  [-e HALOGEN_REASONING_EFFORT=...] \
+  [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \
+  [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
+  [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
   ghcr.io/peonist-ai/halogen-flash-server:0.11.5
 ```
@@ -129,7 +143,7 @@ The command line it was measured and shipped on (128 GB machine):
 | `ttm.pages_limit=32505856` | Max 4 KiB pages the GPU can pin — the ~124 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GB machine.** |
 | `amdgpu.gttsize=126976` | GTT size in MiB (~124 GiB), set to match the pages_limit ceiling. |
 | `amdgpu.vm_update_mode=0` | All GPU page-table updates in the kernel. |
-| `amdgpu.noretry=0` | Retry on page faults (the engine's memory model relies on it). |
+| `amdgpu.noretry=0` | Retry on page faults (the engine's memory design relies on it). |
 | `amdgpu.sg_display=0` | Disables scatter-gather display. |
 
 All of these **require a reboot** — they're read once at boot. `setup.sh`
@@ -148,37 +162,6 @@ Two more things the engine asks of the host:
   drives the GPU through GTT.
 - **`tuned` profile `accelerator-performance`** (runtime, no reboot) for
   maximum throughput.
-
-## The memory model
-
-Once loaded, this server holds most of a 128 GB host:
-
-- The weights (~68 GiB) are **locked into RAM** and cannot be reclaimed.
-- The KV pool is reserved up front (the image default is ~35 GiB).
-- The 47.7 GiB lookup table is read through the file cache and never held in
-  RAM — which is why `free` and `MemAvailable` **overstate free memory by
-  about 68 GiB**, and why a KV pool that leaves under ~10 GiB turns into
-  minutes-long stalls that look like a hang.
-
-The startup line `host memory left for everything else` is the truth. The
-levers, in order: a smaller KV pool (pass
-`HALOGEN_KV_POOL_POSITIONS=262144` through `HALOGEN_EXTRA_ENV`), fewer
-slots, or a machine of its own. `HALOGEN_FLASH_PIN_TRUNK=0` gives
-memory back and costs several times the decode speed — a last resort.
-
-## What happened to the llama.cpp options
-
-This repo replaces an older llama.cpp setup; the flags that governed it have
-either moved into the engine or stopped being choices:
-
-| Old flag/question | What happens now |
-|---|---|
-| Model choice / quant catalog | One engine, one checkpoint. No choice. |
-| Context 128k / 180k / 262k | `HALOGEN_CTX` defaults to the full native 262144; the KV pool, not the context, bounds allocation. |
-| PLE table: SSD streaming vs resident | Gone. The lookup table is streamed from disk through the page cache automatically (`HALOGEN_NGRAM_GATHER_THREADS`, `HALOGEN_HOST_RESERVE_GIB` are the levers). |
-| MTP speculative decoding on/off + draft model file | The MTP drafter is always on by default (`HALOGEN_DRAFTER_DEFAULT=1`); the draft head ships with the checkpoint. |
-| Flash attention / GPU layers / load mode / KV cache quant | No equivalents; the engine manages its own kernels and memory. |
-| `--api-key` for LAN access | **No authentication exists in this engine.** Bind to loopback, or protect a LAN server with a firewall/proxy. |
 
 ## Weights integrity
 
@@ -224,7 +207,8 @@ After `git pull`, `./refresh.sh`:
 1. Offers to change the pinned image tag in `config.env` (backed up to
    `backups/` first)
 2. Offers to `podman pull` the image
-3. Checks the checkpoint is where first run expects it
+3. Re-checks the checkpoint and the vision sidecar against the repo
+   (Weights integrity above)
 
 Engine updates are just a new tag: `./stop.sh && ./run.sh` picks the image
 up. Weights are never re-fetched for a new tag.

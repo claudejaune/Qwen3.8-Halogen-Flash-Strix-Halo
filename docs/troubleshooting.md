@@ -8,146 +8,34 @@ Quick fixes first:
 - **Kernel too old** — the engine needs kernel 7.0+. `./setup.sh` refuses to continue on an older running kernel; boot a newer one first.
 - **WSL2 is not a supported host.** The engine runs on the amdgpu/KFD stack; the GPU registration is refused there. Boot native Linux on the same hardware.
 
-## Out of memory at startup
-
-A start that ends in
-
-```
-dmalloc: FAILED requesting 0.750 GiB after 39.703 GiB in 647 allocations (out of memory)
-HIP ... out of memory
-```
-
-means the KV pool did not fit. **More slots will not fix it** — the slots
-share one pool and each costs only ~115 MB. The knob is the pool:
-
-```bash
-# In config.env — the small layout, still serves four conversations:
-HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144
-```
-
-If it still will not start, add `HALOGEN_MAX_TOK=16384` to
-`HALOGEN_EXTRA_ENV` as well (gives back ~8.8 GiB for ~9% of prefill speed):
-
-```bash
-HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144 HALOGEN_MAX_TOK=16384
-```
-
-By default the server measures the device budget at startup and lowers the
-pool itself, printing what it chose — read that line before tuning anything.
-
-## Server starts but crawls on long prompts
-
-Short prompts fine, long prompts collapse to a few tokens per second with
-the disk busy: the host is short of file cache, not memory. The model's
-47.7 GiB lookup table is read through the page cache and never held in RAM,
-so RAM the KV pool takes is RAM that table loses. The levers:
-
-```bash
-# In config.env — a smaller pool leaves more file cache:
-HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144
-
-# Or let the server choose a smaller pool itself:
-HALOGEN_EXTRA_ENV=HALOGEN_HOST_RESERVE_GIB=32
-```
-
-The log line `lookup table: ... took N s` reports any slow read. If it still
-reads tens of seconds, the drive is the limit — make sure the weights are on
-a fast NVMe SSD.
-
-## Minutes-long stalls that look like a hang (no crash)
-
-This server holds most of a 128 GB host: weights locked (~68 GiB) plus the
-KV pool. If another large process competes for the remainder, allocations
-stop to compact memory and everything can freeze for minutes at 100% of one
-core with no disk activity. It is not a crash and needs no restart.
-
-- Read the startup line `host memory left for everything else` — and believe
-  it over `free`, which overstates free memory by ~68 GiB.
-- Give the machine other workloads sparingly, or shrink the KV pool
-  (`HALOGEN_EXTRA_ENV=HALOGEN_KV_POOL_POSITIONS=262144` in config.env).
-
-## Kernel params not applied
-
-They are read once at boot. After following setup.sh's printed commands and
-rebooting, verify:
-
-```bash
-cat /proc/cmdline | tr ' ' '\n' | grep -E 'iommu|ttm|amdgpu'
-```
-
-`amd_iommu=off` disables the NPU and DMA isolation machine-wide — expected
-on a dedicated inference box, a real posture change otherwise.
-
 ## GPU not reachable in the container
 
 - Check the host: `ls /dev/kfd /dev/dri` (created by the amdgpu driver).
-- Check your groups: `groups` must include `render` and/or `video` (podman's
-  `--group-add keep-groups` forwards them into the container).
+- Check access, not just groups: your user must be able to open `/dev/kfd`
+  read-write and `/dev/dri/render*`. `setup.sh` checks this and offers the fix;
+  by hand it is `sudo usermod -aG render,video $USER`, then **reboot** (or log
+  out and back in) — group membership is fixed when the session starts, so it
+  does not apply to the current terminal (`newgrp` only patches one shell).
+  On Fedora and Arch the nodes are world-readable/writable by default, so this
+  is usually only an issue on Ubuntu; podman's `--group-add keep-groups`
+  forwards your groups into the container.
 - If startup dies early with a GPU runtime error, the usual cause is a
   missing `--ipc=host`; `run.sh` always sets it, so this points at a driver
   or permissions problem on the host.
 
-## Vision questions
+## Vision
 
 - **Images are refused with a 400 naming the flag** — `HALOGEN_VISION_TOWER`
   is not set. Re-run `./setup.sh` and enable vision, or add
   `HALOGEN_VISION_TOWER=1` to config.env by hand.
+- **The container exits at startup** — vision is on but
+  `qwen38-flash-next-vision.hgn` is missing beside the checkpoint; the engine
+  never downloads it. Fixes, in order:
+  - `./refresh.sh` — offers to download it (0.84 GiB, sha256-verified against
+    the repo's live hash).
+  - Re-run `./setup.sh` — it offers the same fetch.
+  - By hand: `hf download peonist-ai/halogen-qwen3.8-flash-next qwen38-flash-next-vision.hgn --local-dir ~/models/halogen-models`
 - **An `http(s)` image URL is refused by design** — send `data:` URLs or
   bare base64.
 - **Check what the running build accepts**: `GET /health` reports whether
   images are accepted and why not.
-
-## Suspect a damaged checkpoint
-
-`run.sh` and `refresh.sh` warn when the checkpoint is far below its ~115 GiB
-(incomplete download). For deeper verification — corruption, a file moved by
-hand, bitrot — `./refresh.sh` offers to compute the checkpoint's sha256
-(a few minutes on NVMe) and compare it against the hash the HF repo
-currently lists, the `CHECKPOINT_SHA256` pinned in config.env, or a hash it
-recorded on a previous run. A mismatch means: delete the checkpoint and
-`./run.sh` again (resumes from HF).
-
-## The creators shipped a new version
-
-`./refresh.sh` re-queries the HF repo's tree API for the checkpoint's
-current sha256. When it differs from the pin in config.env, it first hashes
-your local file (optional, a few minutes) to tell a stale pin from a stale
-disk:
-
-- Local file **is** the new version → config.env is re-pinned; nothing is
-  downloaded.
-- Local file **is not** → refresh.sh offers to stop the server and delete
-  only the checkpoint, its overlay, and the vision sidecar, then you run
-  `./run.sh` to re-download (~118 GiB, resumable). Nothing else on disk is
-  touched, and saying No deletes nothing.
-
-## Vision sidecar missing
-
-The engine never downloads the vision sidecar itself; with
-`HALOGEN_VISION_TOWER=1` and no `qwen38-flash-next-vision.hgn` beside the
-checkpoint the container **exits at startup**. Fixes, in order:
-
-- `./refresh.sh` — offers to download it (0.84 GiB, sha256-verified against
-  the repo's live hash).
-- Re-run `./setup.sh` — it offers the same fetch.
-- By hand: `hf download peonist-ai/halogen-qwen3.8-flash-next qwen38-flash-next-vision.hgn --local-dir ~/models/halogen-models`
-
-An `http(s)` image URL is refused by design — send `data:` URLs or bare
-base64. `GET /health` reports whether images are accepted and why not.
-
-## Weights download problems
-
-- First start fetches ~118 GiB into `~/models/halogen-models`. Interrupted
-  transfers resume on the next `./run.sh`.
-- A truncated tree fails inside the container before the engine loads —
-  delete the incomplete files and run again.
-- The 115 GiB checkpoint is never re-fetched for a new image tag; only the
-  2.4 GiB sidecar can refresh.
-- To fetch the weights yourself instead (container stays offline):
-  `hf download peonist-ai/halogen-qwen3.8-flash-next --local-dir ~/models/halogen-models`
-
-## Slow image processing
-
-One image costs ~5.5 s at 1280x800, ~12 s at 1080p, ~25 s at 1440p. 4K reads
-no better than 1440p; the engine downscales to fit. Dense pages are harder
-than sparse ones at the same text size — crop if you can.
