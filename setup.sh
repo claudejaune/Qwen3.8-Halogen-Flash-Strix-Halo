@@ -42,8 +42,7 @@ DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
 MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"
-DISK_MIN_GIB=125
-DISK_REC_GIB=130
+DISK_MIN_GIB=130
 
 # Preserve an existing weights location across setup runs (extracted by grep
 # — we deliberately do NOT execute the old config here).
@@ -482,14 +481,9 @@ if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
     if [[ -z "$avail" ]]; then
         warn "Could not check free disk space for $MODELS_DIR."
     elif (( avail < DISK_MIN_GIB )); then
-        err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The weights
-are ~118 GiB and download on first ./run.sh; need at least ${DISK_MIN_GIB} GiB
-(${DISK_REC_GIB} GiB recommended)."
-    elif (( avail < DISK_REC_GIB )); then
-        warn "Only ${avail} GiB free. ${DISK_REC_GIB} GiB is recommended so the disk isn't packed full."
-        if ! ask_yes_no "  Continue anyway?" n; then
-            err "Stopped. config.env was not written. Free some space and re-run ./setup.sh."
-        fi
+        err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The first
+./run.sh downloads the weights and sidecars (~122 GiB in all); setup needs at
+least ${DISK_MIN_GIB} GiB free. Free some space and re-run ./setup.sh."
     fi
 else
     ok "Checkpoint already in place — no download needed, disk-space check skipped."

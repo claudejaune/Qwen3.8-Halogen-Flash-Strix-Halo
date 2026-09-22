@@ -40,8 +40,8 @@ except a stale sidecar; unset, the container opens no outbound connections.
    sha256 and, when a checkpoint is already on disk, verifies it against that
    hash (or judges completeness by size)
 7. **Disk check** — the weights are ~118 GiB and download on first `run.sh`;
-   the fetch refuses nothing itself, so setup warns under 130 GiB free and
-   stops under 125 GiB. Skipped when the checkpoint on disk needs no download
+   the fetch refuses nothing itself, so setup stops under 130 GiB free.
+   Skipped when the checkpoint on disk needs no download
 8. **Write config.env** — before anything is downloaded
 9. **Fetch phase** — offers to `podman pull` the image now (or leaves it to
    `run.sh`) and, with vision on, downloads and verifies the vision sidecar.
