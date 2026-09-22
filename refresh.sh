@@ -3,7 +3,7 @@
 # verify the checkpoint's integrity, and optionally update the pinned image
 # tag in config.env.
 #
-# There are no toolboxes and no quant catalog in this repo, so this script is
+# There is no build tooling in this repo, so this script is
 # small by design: pull the image, verify the weights, and rewrite
 # HALOGEN_IMAGE if you want a different tag.
 set -euo pipefail

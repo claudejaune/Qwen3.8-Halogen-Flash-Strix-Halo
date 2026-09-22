@@ -70,7 +70,7 @@ case "$OS_ID" in
     *)             OS_LABEL="${PRETTY_NAME:-$OS_ID}" ;;
 esac
 
-# ── Container tooling (podman only — no toolbox, no local builds) ────────────
+# ── Container tooling (podman only — no local builds) ────────────────────────
 install_podman() {
     echo "  This project runs the server in a podman container."
     echo ""
@@ -136,6 +136,46 @@ newer (the read-only GPU registration of the checkpoint is refused on 6.x).
 Boot a newer kernel and re-run ./setup.sh."
 fi
 ok "Kernel $KERNEL_RELEASE (7.0+ required)."
+
+# ── GPU device access ────────────────────────────────────────────────────────
+# The engine opens /dev/kfd and a /dev/dri/render* node. On Fedora and Arch the
+# udev default makes those nodes world-readable/writable; on Ubuntu they are
+# 0660 root:render, so group membership is the gate. Test actual access rather
+# than group membership — it is correct on every distro. AMD's documented fix
+# (add both groups) is the remedy, not the test.
+info "=== GPU access ==="
+RENDER_NODE="$(compgen -G '/dev/dri/renderD*' 2>/dev/null | head -n1 || true)"
+GPU_ACCESS_REASON=""
+if [[ ! -e /dev/kfd ]]; then
+    GPU_ACCESS_REASON="/dev/kfd is missing — the amdgpu/KFD driver isn't loaded."
+elif [[ ! -r /dev/kfd || ! -w /dev/kfd ]]; then
+    GPU_ACCESS_REASON="/dev/kfd is not readable/writable by your user."
+elif [[ -z "$RENDER_NODE" || ! -r "$RENDER_NODE" ]]; then
+    GPU_ACCESS_REASON="the GPU render node (/dev/dri/renderD*) is missing or not readable."
+fi
+
+if [[ -z "$GPU_ACCESS_REASON" ]]; then
+    ok "Your user can access the GPU devices."
+else
+    warn "GPU access check failed: $GPU_ACCESS_REASON"
+    TARGET_USER="$(id -un)"
+    echo "  The engine cannot start without GPU access. The usual cause is group"
+    echo "  membership; AMD's documented fix adds both groups (the -a keeps your"
+    echo "  existing ones):"
+    echo ""
+    echo "    sudo usermod -aG render,video $TARGET_USER"
+    echo ""
+    if have sudo && ask_yes_no "  Run that now?" y; then
+        if sudo usermod -aG render,video "$TARGET_USER"; then
+            ok "Membership updated."
+        else
+            warn "usermod failed. Run it yourself, then re-run ./setup.sh."
+        fi
+    fi
+    err "Group membership takes effect only in a new session.
+Boot (recommended) or log out and back in, then re-run ./setup.sh to finish setup."
+fi
+echo ""
 
 CMDLINE=$(cat /proc/cmdline 2>/dev/null || echo "")
 cmdline_has() {
