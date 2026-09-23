@@ -34,7 +34,6 @@ echo " halogen-flash-server — refresh"
 echo "============================================"
 echo ""
 echo "  Run this after:  git pull"
-echo "  You can answer No to any step."
 echo ""
 
 if [[ -z "${HALOGEN_IMAGE:-}" ]]; then
@@ -74,11 +73,9 @@ echo "  config.env pins:      $HALOGEN_IMAGE"
 echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
 echo ""
 if [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
-    echo "  Press Enter to keep it, or type another version (for example"
-    echo "  0.12.3 or :latest)."
+    echo "  Press Enter to keep it."
 else
-    echo "  Press Enter to update to the recommended version, or type another"
-    echo "  version (for example 0.12.3 or :latest)."
+    echo "  Press Enter to update to the recommended version."
 fi
 ask IMAGE_CHOICE "Image" "$HALOGEN_RECOMMENDED_IMAGE"
 NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
@@ -86,14 +83,12 @@ NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
 IMAGE_CHANGED=false
 if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
     ok "Keeping $HALOGEN_IMAGE."
-elif ask_yes_no "  Point config.env at $NEW_IMAGE?" y; then
+else
     backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
     HALOGEN_IMAGE="$NEW_IMAGE"
     IMAGE_CHANGED=true
     ok "config.env updated to $HALOGEN_IMAGE."
     ok "Backup saved as: $backup_path"
-else
-    echo "  Kept $HALOGEN_IMAGE."
 fi
 
 if have podman; then
