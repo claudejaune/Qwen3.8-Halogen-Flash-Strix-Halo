@@ -4,8 +4,9 @@
 # Writes config.env (plain KEY=value data) which run.sh reads. Re-running
 # setup.sh overwrites config.env with no backup.
 # The engine is halogen-flash-server: a prebuilt container image. No local
-# builds. Weights (~122 GiB) are fetched by the container itself on first
-# start (HALOGEN_DOWNLOAD); this script only checks that there is room.
+# builds. Weights (~122 GiB) are fetched by the container on first start
+# (HALOGEN_DOWNLOAD); setup offers the same transfer itself, so a completed
+# setup usually means ./run.sh starts a server rather than a download.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -536,7 +537,7 @@ ok "Config written to: $CONFIG_FILE"
 CONFIG_WRITTEN=true
 echo ""
 
-# ── Fetch phase: image + vision sidecar (checkpoint downloads on first run.sh)
+# ── Fetch phase: image, weights, vision sidecar ──────────────────────────────
 info "=== Fetch phase: container image ==="
 if podman image exists "$DEFAULT_IMAGE" 2>/dev/null; then
     ok "Image $DEFAULT_IMAGE already present."
@@ -549,6 +550,86 @@ else
         fi
     else
         echo "  Left for first ./run.sh (it pulls automatically)."
+    fi
+fi
+echo ""
+
+# setup used to leave the ~122 GiB to the container's first start. It now
+# offers the transfer here, with the SAME command the engine runs for
+# HALOGEN_DOWNLOAD (hf download <repo> --local-dir), so a tree fetched here is
+# exactly the tree the container would have fetched. It resumes if
+# interrupted and needs no GPU, so it can run before the kernel-param reboot.
+VISION_FLAG=0
+if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
+    VISION_FLAG=1
+fi
+WEIGHTS_READY=false
+
+info "=== Fetch phase: weights ==="
+WEIGHTS_RC=0
+WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
+if (( WEIGHTS_RC == 0 )); then
+    WEIGHTS_READY=true
+    ok "Weights present and the expected size in $MODELS_DIR."
+else
+    echo "  The weights are not all in place:"
+    while read -r st file detail; do
+        case "$st" in
+            missing)    echo "    missing:    $file" ;;
+            incomplete) echo "    incomplete: $file ($detail)" ;;
+        esac
+    done <<<"$WEIGHTS_STATUS"
+    echo ""
+    echo "  Downloading now means ./run.sh starts the server instead of a"
+    echo "  multi-hour transfer. It resumes if interrupted, and it does not"
+    echo "  need the GPU."
+    echo ""
+    if [[ "$VISION_FLAG" != "1" ]]; then
+        echo "  Vision is off, so its sidecar (0.84 GiB) and the unused speed"
+        echo "  overlay and MTP head (~4 GiB) are skipped. Re-run setup with"
+        echo "  vision on to fetch the sidecar."
+        echo ""
+    fi
+    if ask_yes_no "  Download the weights now (~122 GiB)?" y; then
+        # Re-check space: the gate above ran before the image pull.
+        avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
+        if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
+            warn "Only ${avail} GiB free on the disk that holds $MODELS_DIR."
+            warn "Skipping the download. Free space and re-run ./setup.sh."
+        elif hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG"; then
+            ok "Download finished."
+            WEIGHTS_RC=0
+            WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
+            if (( WEIGHTS_RC == 0 )); then
+                WEIGHTS_READY=true
+                ok "Weights verified: every file is present at the expected size."
+                if [[ -n "$REMOTE_CK_SHA" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
+                    info "Computing sha256 (a few minutes on NVMe)..."
+                    LOCAL_SHA="$(file_sha256 "$CK_PATH")"
+                    if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
+                        ok "Checkpoint integrity verified."
+                    else
+                        warn "CHECKSUM MISMATCH: expected $REMOTE_CK_SHA"
+                        warn "                  got ${LOCAL_SHA:-<hash failed>}"
+                        warn "Delete $CK_PATH and re-run ./setup.sh to re-download."
+                    fi
+                fi
+            else
+                warn "Some files are still missing or the wrong size:"
+                while read -r st file detail; do
+                    case "$st" in
+                        missing)    echo "    missing:    $file" ;;
+                        incomplete) echo "    incomplete: $file ($detail)" ;;
+                    esac
+                done <<<"$WEIGHTS_STATUS"
+                warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
+            fi
+        else
+            warn "The weights download did not finish."
+            warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
+        fi
+    else
+        warn "Skipped. ./run.sh downloads the weights on first start."
     fi
 fi
 echo ""
@@ -591,7 +672,11 @@ echo " Setup complete!"
 echo "============================================"
 echo ""
 echo "  Image:      $DEFAULT_IMAGE"
+if [[ "$WEIGHTS_READY" == "true" ]]; then
+echo "  Weights:    $MODELS_DIR (ready)"
+else
 echo "  Weights:    $MODELS_DIR (downloaded on first run, ~122 GiB)"
+fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
 echo "  Bind:       $BIND_HOST:$PORT"
@@ -604,8 +689,13 @@ echo "  Start:      ./run.sh"
 echo "  Stop:       ./stop.sh"
 echo "  Update:     ./refresh.sh   (after git pull)"
 echo ""
+if [[ "$WEIGHTS_READY" == "true" ]]; then
+echo "  The weights are in place; ./run.sh loads them (minutes on the first"
+echo "  start). Watch its output for progress."
+else
 echo "  First start downloads the weights (~122 GiB, resumes if interrupted)"
 echo "  and then takes minutes to load them. Watch ./run.sh's output."
+fi
 echo ""
 
 if [[ "$NEEDS_REBOOT" == "true" ]]; then

@@ -82,16 +82,65 @@ if [[ ! -d "$MODELS_DIR" ]]; then
     exit 1
 fi
 
-# Cheap truncation check: a checkpoint that exists but is far below its
-# ~115 GiB is almost certainly incomplete. A full sha256 check is minutes
-# long — ./refresh.sh does that on demand.
-CHECKPOINT_FILE="$MODELS_DIR/qwen38-flash-next-w4b.hgn"
-if [[ -f "$CHECKPOINT_FILE" ]]; then
-    CK_GIB=$(( $(stat -c '%s' "$CHECKPOINT_FILE") / 1073741824 ))
-    if (( CK_GIB < 110 )); then
-        warn "Checkpoint present but only ${CK_GIB} GiB (expect ~115 GiB)."
-        warn "It is probably incomplete; ./run.sh's download resumes, or verify with ./refresh.sh."
+# ── Weights pre-flight ───────────────────────────────────────────────────────
+# The container's HALOGEN_DOWNLOAD only fires when the checkpoint is ABSENT —
+# a truncated or corrupt file on disk is never re-fetched by the engine, and a
+# missing vision sidecar is never fetched at all. This check covers both:
+# missing files (offer the download the container would have done anyway) and
+# present-but-wrong files (which only this check repairs). It never blocks:
+# declining leaves the container to do exactly what it did before.
+VISION_FLAG=0
+if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
+    VISION_FLAG=1
+fi
+WEIGHTS_RC=0
+WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" 2>/dev/null)" || WEIGHTS_RC=$?
+if (( WEIGHTS_RC != 0 )); then
+    warn "The weights in $MODELS_DIR are not all in place:"
+    while read -r st file detail; do
+        case "$st" in
+            missing)    echo "    missing:    $file" ;;
+            incomplete) echo "    incomplete: $file ($detail)" ;;
+        esac
+    done <<<"$WEIGHTS_STATUS"
+    echo ""
+    echo "  A download resumes from what is already on disk. The engine's own"
+    echo "  HALOGEN_DOWNLOAD fetches a MISSING checkpoint on start, but it"
+    echo "  never repairs a file that is present and the wrong size."
+    echo ""
+    if ask_yes_no "  Download / repair the weights now (~122 GiB)?" y; then
+        if have podman && ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
+            info "Pulling the image first (its own 'hf' does the download)..."
+            podman pull "$HALOGEN_IMAGE" || warn "Image pull failed."
+        fi
+        if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG"; then
+            WEIGHTS_RC=0
+            WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" 2>/dev/null)" || WEIGHTS_RC=$?
+            if (( WEIGHTS_RC == 0 )); then
+                ok "Weights ready."
+                if [[ -n "${CHECKPOINT_SHA256:-}" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
+                    info "Computing sha256 (a few minutes on NVMe)..."
+                    LOCAL_SHA="$(file_sha256 "$MODELS_DIR/$HF_CHECKPOINT_FILE")"
+                    if [[ "$LOCAL_SHA" == "$CHECKPOINT_SHA256" ]]; then
+                        ok "Checkpoint integrity verified."
+                    else
+                        warn "CHECKSUM MISMATCH: expected $CHECKPOINT_SHA256"
+                        warn "                  got ${LOCAL_SHA:-<hash failed>}"
+                        warn "Delete $MODELS_DIR/$HF_CHECKPOINT_FILE and re-run ./run.sh."
+                    fi
+                fi
+            else
+                warn "The download finished but the check still reports a problem."
+                warn "The engine may fail; re-run ./run.sh to resume, or ./refresh.sh."
+            fi
+        else
+            warn "The download did not finish — continuing; the engine may fail."
+        fi
+    else
+        warn "Continuing without downloading. The engine fetches a missing"
+        warn "checkpoint itself (HALOGEN_DOWNLOAD); a corrupt one will fail."
     fi
+    echo ""
 fi
 
 # The engine port has no authentication and is never published; the API port
@@ -141,6 +190,13 @@ fi
 # own effort win). Unset = the engine's default, the chat template's xhigh.
 if [[ -n "${HALOGEN_REASONING_EFFORT:-}" ]]; then
     CMD+=(-e "HALOGEN_REASONING_EFFORT=$HALOGEN_REASONING_EFFORT")
+fi
+
+# Optional HF token: the engine's own HALOGEN_DOWNLOAD uses it for higher
+# rate limits. Read from the environment or config.env; never written by
+# setup.
+if [[ -n "${HF_TOKEN:-}" ]]; then
+    CMD+=(-e "HF_TOKEN=$HF_TOKEN")
 fi
 
 # Free-form extras: space-separated KEY=value pairs, one -e each.
@@ -193,8 +249,13 @@ fi
 echo ""
 echo "  Stop:      ./stop.sh (from another terminal)"
 echo ""
-echo "  First start downloads the weights (~122 GiB, resumes if interrupted)"
-echo "  and loads them for minutes. Later starts skip both."
+if (( WEIGHTS_RC == 0 )); then
+echo "  The weights are in place; loading them takes minutes on a cold start."
+echo "  The download is skipped whenever the files are complete."
+else
+echo "  The weights are not complete: this start downloads them (~122 GiB,"
+echo "  resumes if interrupted) and then loads them for minutes."
+fi
 echo ""
 echo "============================================"
 echo ""

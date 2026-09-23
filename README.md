@@ -26,7 +26,7 @@ cd Qwen3.8-Halogen-Flash-Strix-Halo
 ./setup.sh
 ```
 
-The setup script will ask you questions and configure your system accordingly. Once configured, just run the server:
+The setup script will ask you questions, configure your system accordingly, and download the weights. Once configured, just run the server:
 
 ```bash
 ./run.sh

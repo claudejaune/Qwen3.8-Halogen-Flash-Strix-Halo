@@ -17,6 +17,10 @@ container's first start (`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next
 With that variable set and the volume writable, later starts re-fetch nothing
 except a stale sidecar; unset, the container opens no outbound connections.
 
+`setup.sh` and `run.sh` also offer the fetch on the host side, running the
+image's bundled `hf`. A completed setup leaves the weights in place, so the
+container starts serving instead of downloading.
+
 ## What setup.sh does
 
 1. **Podman check** — detects your distro and offers to install `podman` if missing
@@ -39,19 +43,22 @@ except a stale sidecar; unset, the container opens no outbound connections.
 6. **Checkpoint state** — queries the HF repo for the checkpoint's current
    sha256 and, when a checkpoint is already on disk, verifies it against that
    hash (or judges completeness by size)
-7. **Disk check** — the weights are ~122 GiB and download on first `run.sh`;
-   the fetch refuses nothing itself, so setup stops under 130 GiB free.
-   Skipped when the checkpoint on disk needs no download
+7. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
+   when a download is actually needed. Skipped when the checkpoint on disk
+   needs no download
 8. **Write config.env** — before anything is downloaded
-9. **Fetch phase** — offers to `podman pull` the image now (or leaves it to
-   `run.sh`) and, with vision on, downloads and verifies the vision sidecar.
-   The checkpoint itself downloads on first `run.sh`
+9. **Fetch phase** — offers to `podman pull` the image, then offers the
+   weights: the engine's own `hf download` command, run through the image's
+   bundled `hf`, resumable and with no GPU needed. Arrived files are checked
+   by exact byte size against the repo's live listing, and the checkpoint's
+   sha256 is offered as a final check. The download includes only the
+   sidecars the configuration uses
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, nothing has changed — run `./setup.sh` again to complete
-setup. After it is written, the message says the config was saved and a
-re-run of `./setup.sh` is still needed for a complete setup (the fetch
-phase's questions are all answered before any download starts).
+setup. After it is written, the message says the config was saved. An
+interrupted weights download resumes when you re-run `./setup.sh` or
+`./run.sh`.
 
 ## config.env reference
 
@@ -98,6 +105,7 @@ HALOGEN_VISION_TOWER=1
 | `HALOGEN_CTX` | *(unset = 262144)* | Advanced: the most context ONE request may use. The native context is the default; there is normally no reason to set this. |
 | `HALOGEN_MODEL_ID` | *(unset)* | Advanced: the model id at `/v1/models`. A label; useful to run two stacks on one host. |
 | `HALOGEN_EXTRA_ENV` | *(unset)* | Advanced: space-separated `KEY=value` pairs passed as extra `-e` arguments, for any `HALOGEN_*` variable this repo does not name (e.g. `HALOGEN_TEMPERATURE=1.0 HALOGEN_TOP_P=0.95 HALOGEN_TOP_K=20` for the model card's sampling settings). |
+| `HF_TOKEN` | *(unset)* | Optional Hugging Face access token for the weights download, which raises rate limits. Set it in the environment or in config.env. |
 
 ## What run.sh starts
 
@@ -131,6 +139,11 @@ podman run --rm --name halogen-flash \
 - `--name halogen-flash` makes the container findable by `stop.sh` and
   refuses a second run while the first one exists.
 
+Before any of that, `run.sh` checks the weights and offers to download or
+repair anything missing or the wrong size, using the same `hf download` setup
+uses. The check compares each file's byte size against the repo's live
+listing, so a truncated checkpoint is caught before the engine loads it.
+
 ## Kernel params
 
 The engine runs on the amdgpu/KFD stack and its memory design depends on it:
@@ -160,6 +173,22 @@ Two more things the engine asks of the host:
 - **`tuned` profile `accelerator-performance`** (runtime, no reboot) for
   maximum throughput.
 
+## Downloading the weights
+
+The weights are fetched with the engine's own command,
+`HF_HUB_OFFLINE=0 hf download peonist-ai/halogen-qwen3.8-flash-next
+--local-dir <MODELS_DIR>`, run by the host's `hf` CLI or by the image's
+bundled `hf` (`podman run --entrypoint /usr/local/bin/hf`, which needs no GPU
+devices). A resumable `curl` fetch covers a host with neither.
+
+The download includes only the sidecars the configuration uses: the vision
+sidecar when vision is on, the quality overlay, and the tokenizer. It skips
+the speed overlay and the MTP head, which this deployment does not use.
+
+`setup.sh` offers the download after it writes the config; `run.sh` offers it
+when its pre-flight finds a file missing or the wrong size. Both resume from
+`<MODELS_DIR>/.cache/huggingface/`. Set `HF_TOKEN` for higher rate limits.
+
 ## Weights integrity
 
 The checkpoint is ~115 GiB and the single most expensive thing on disk, so
@@ -180,9 +209,11 @@ every layer of this repo checks it:
    - **remote ≠ local file** → the file is damaged; delete and re-download.
    - **everything matches** → optionally verify the local file against the
      live hash.
-2. **Size sanity check** (always, in `run.sh` and `refresh.sh`): a checkpoint
-   far below its ~115 GiB is almost certainly incomplete — flagged without
-   any hashing.
+2. **Exact-size check** (setup, `run.sh` and `refresh.sh`): the tree API lists
+   each file's byte size, so a truncated or partial file is caught without any
+   hashing. `setup.sh` and `run.sh` offer to re-download what fails it;
+   `refresh.sh` reports it. With the repo unreachable, the checkpoint is
+   judged against its ~110 GiB floor.
 3. **Offline fallback**: with the repo unreachable, refresh.sh falls back to
    config's pinned hash, or a hash it recorded once into
    `<MODELS_DIR>/checkpoint.sha256`, or the size check alone.
