@@ -85,7 +85,7 @@ PORT=8731
 MODELS_DIR=/home/you/models/halogen-models
 
 # Engine
-HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.11.5
+HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.13.5
 HALOGEN_KV_SLOTS=4
 HALOGEN_VISION_TOWER=1
 ```
@@ -124,7 +124,7 @@ podman run --rm --name halogen-flash \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.13.5
 ```
 
 - **`--ipc=host` is load-bearing**: without it the GPU runtime dies during
@@ -232,11 +232,14 @@ yes.
 
 After `git pull`, `./refresh.sh`:
 
-1. Offers to change the pinned image tag in `config.env` (backed up to
-   `backups/` first)
-2. Offers to `podman pull` the image
+1. Compares the version in `config.env` with the one this repo ships and
+   offers to update it. Enter takes the recommended version; a bare tag such
+   as `0.13.5` or `:latest` is expanded to a full reference. `config.env` is
+   backed up to `backups/` first
+2. Offers to `podman pull` the image (the default is yes when the version
+   changed)
 3. Re-checks the checkpoint and the vision sidecar against the repo
    (Weights integrity above)
 
-Engine updates are just a new tag: `./stop.sh && ./run.sh` picks the image
-up. Weights are never re-fetched for a new tag.
+An update is `git pull`, `./refresh.sh`, `./run.sh`: `run.sh` pulls the image
+when it is missing. Weights are never re-fetched for a new tag.

@@ -18,6 +18,12 @@ CONFIG_ALLOWED_KEYS=(
     HF_TOKEN
 )
 
+# The engine image. HALOGEN_RECOMMENDED_IMAGE is the single source of truth
+# for the version this repo ships: setup.sh writes it into a new config.env,
+# and refresh.sh offers it to an existing one.
+HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.13.5"
+
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
 # hf_remote_sha256() reads.
@@ -206,6 +212,20 @@ podman_container_running() {
     local running
     running="$(podman ps --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')" || return 1
     [[ " $running " == *" $1 "* ]]
+}
+
+# normalize_image <value>
+# Turns what a user types into a full image reference. A bare tag (0.13.5,
+# latest), a :tag, or a complete reference all work.
+normalize_image() {
+    local value="$1"
+    if [[ "$value" == */* ]]; then
+        printf '%s\n' "$value"
+    elif [[ "$value" == :* ]]; then
+        printf '%s\n' "${HALOGEN_IMAGE_REPO}${value}"
+    else
+        printf '%s\n' "${HALOGEN_IMAGE_REPO}:${value}"
+    fi
 }
 
 # ── Hugging Face helpers ─────────────────────────────────────────────────────

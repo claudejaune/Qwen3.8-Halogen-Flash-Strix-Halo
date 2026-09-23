@@ -39,7 +39,8 @@ on_interrupt() {
 }
 trap on_interrupt INT
 
-DEFAULT_IMAGE="ghcr.io/peonist-ai/halogen-flash-server:0.11.5"
+# The version this repo ships. The single source of truth is in lib/common.sh.
+DEFAULT_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
 MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"

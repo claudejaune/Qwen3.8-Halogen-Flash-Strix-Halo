@@ -41,46 +41,67 @@ if [[ -z "${HALOGEN_IMAGE:-}" ]]; then
     err "HALOGEN_IMAGE not set in config.env. Re-run ./setup.sh."
 fi
 
-# ── Image tag ────────────────────────────────────────────────────────────────
-info "=== Image ==="
-echo "  Current tag: $HALOGEN_IMAGE"
-echo "  If this repo's docs now recommend a newer version, enter it here."
-echo "  Press Enter to keep the current tag."
-ask NEW_TAG "New image tag (empty = keep $HALOGEN_IMAGE)" ""
-if [[ -n "$NEW_TAG" ]] && [[ "$NEW_TAG" != "$HALOGEN_IMAGE" ]]; then
-    if ! ask_yes_no "  Point config.env at $NEW_TAG?" n; then
-        echo "  Kept $HALOGEN_IMAGE."
-    else
-        backup_config() {
-            mkdir -p "$SCRIPT_DIR/backups"
-            local ts dest
-            ts="$(date +%Y-%m-%d-%H-%M)"
-            dest="$SCRIPT_DIR/backups/config.env-$ts"
-            if [[ -e "$dest" ]]; then
-                dest="$SCRIPT_DIR/backups/config.env-$ts-$(date +%S)"
-            fi
-            cp -a "$CONFIG_FILE" "$dest"
-            printf '%s\n' "$dest"
-        }
-        backup_path="$(backup_config)"
-        tmp="$(mktemp "$SCRIPT_DIR/.config.env.tmp.XXXXXX")"
-        seen=0
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            case "$line" in
-                HALOGEN_IMAGE=*) seen=1; printf 'HALOGEN_IMAGE=%s\n' "$NEW_TAG" ;;
-                *)               printf '%s\n' "$line" ;;
-            esac
-        done < "$CONFIG_FILE" > "$tmp"
-        (( seen )) || printf 'HALOGEN_IMAGE=%s\n' "$NEW_TAG" >> "$tmp"
-        mv -f "$tmp" "$CONFIG_FILE"
-        HALOGEN_IMAGE="$NEW_TAG"
-        ok "config.env updated to $HALOGEN_IMAGE."
-        ok "Backup saved as: $backup_path"
+# rewrite_config_key <KEY> <value> — back up config.env, replace KEY= (or
+# append it), keep everything else byte-for-byte. Prints the backup path.
+rewrite_config_key() {
+    local key="$1" value="$2" backup_path tmp seen=0
+    mkdir -p "$SCRIPT_DIR/backups"
+    local ts
+    ts="$(date +%Y-%m-%d-%H-%M)"
+    backup_path="$SCRIPT_DIR/backups/config.env-$ts"
+    if [[ -e "$backup_path" ]]; then
+        backup_path="$SCRIPT_DIR/backups/config.env-$ts-$(date +%S)"
     fi
+    cp -a "$CONFIG_FILE" "$backup_path"
+    tmp="$(mktemp "$SCRIPT_DIR/.config.env.tmp.XXXXXX")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            "$key="*) seen=1; printf '%s=%s\n' "$key" "$value" ;;
+            *)        printf '%s\n' "$line" ;;
+        esac
+    done < "$CONFIG_FILE" > "$tmp"
+    (( seen )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv -f "$tmp" "$CONFIG_FILE"
+    printf '%s\n' "$backup_path"
+}
+
+# ── Image ────────────────────────────────────────────────────────────────────
+# Enter takes the recommended version, which upgrades a config.env that pins
+# an older one. A bare tag such as 0.13.5 or :latest is expanded to a full
+# reference, so nothing has to be typed in full.
+info "=== Image ==="
+echo "  config.env pins:      $HALOGEN_IMAGE"
+echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
+echo ""
+if [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
+    echo "  Press Enter to keep it, or type another version (for example"
+    echo "  0.12.3 or :latest)."
+else
+    echo "  Press Enter to update to the recommended version, or type another"
+    echo "  version (for example 0.12.3 or :latest)."
+fi
+ask IMAGE_CHOICE "Image" "$HALOGEN_RECOMMENDED_IMAGE"
+NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
+
+IMAGE_CHANGED=false
+if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
+    ok "Keeping $HALOGEN_IMAGE."
+elif ask_yes_no "  Point config.env at $NEW_IMAGE?" y; then
+    backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
+    HALOGEN_IMAGE="$NEW_IMAGE"
+    IMAGE_CHANGED=true
+    ok "config.env updated to $HALOGEN_IMAGE."
+    ok "Backup saved as: $backup_path"
+else
+    echo "  Kept $HALOGEN_IMAGE."
 fi
 
 if have podman; then
-    if ask_yes_no "  Pull $HALOGEN_IMAGE now?" n; then
+    PULL_DEFAULT=n
+    if [[ "$IMAGE_CHANGED" == "true" ]]; then
+        PULL_DEFAULT=y
+    fi
+    if ask_yes_no "  Pull $HALOGEN_IMAGE now?" "$PULL_DEFAULT"; then
         if podman pull "$HALOGEN_IMAGE"; then
             ok "Image refreshed."
         else
@@ -119,30 +140,6 @@ verify_checkpoint() {
     warn "CHECKSUM MISMATCH: expected $expected"
     warn "                          got $actual"
     return 1
-}
-
-# rewrite_config_key <KEY> <value> — back up config.env, replace KEY= (or
-# append it), keep everything else byte-for-byte.
-rewrite_config_key() {
-    local key="$1" value="$2" backup_path tmp seen=0
-    mkdir -p "$SCRIPT_DIR/backups"
-    local ts
-    ts="$(date +%Y-%m-%d-%H-%M)"
-    backup_path="$SCRIPT_DIR/backups/config.env-$ts"
-    if [[ -e "$backup_path" ]]; then
-        backup_path="$SCRIPT_DIR/backups/config.env-$ts-$(date +%S)"
-    fi
-    cp -a "$CONFIG_FILE" "$backup_path"
-    tmp="$(mktemp "$SCRIPT_DIR/.config.env.tmp.XXXXXX")"
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        case "$line" in
-            "$key="*) seen=1; printf '%s=%s\n' "$key" "$value" ;;
-            *)        printf '%s\n' "$line" ;;
-        esac
-    done < "$CONFIG_FILE" > "$tmp"
-    (( seen )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
-    mv -f "$tmp" "$CONFIG_FILE"
-    printf '%s\n' "$backup_path"
 }
 
 # offer_update_flow — the upstream checkpoint changed and the local file does
