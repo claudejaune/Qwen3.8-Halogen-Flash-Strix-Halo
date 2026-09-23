@@ -55,6 +55,10 @@ git pull
 ./refresh.sh
 ```
 
+## Using with coding agents (Pi, OpenCode, etc)
+
+Point your agent to the IP address and port you chose (`http://127.0.0.1:8731/v1` by default) and tell it to add it to your models list. It should then appear as `Halogen Qwen 3.8 Flash` in your models.
+
 ## Documentation
 
 - [docs/how-it-works.md](docs/how-it-works.md) — what run.sh passes to the
