@@ -11,7 +11,7 @@ No prior experience with running local AI models needed. The scripts guide you t
 - AMD Strix Halo with 128 GB RAM
 - 130 GiB free disk minimum
 - Kernel 7.0 or newer
-  -Ubuntu 24.04 comes with kernel 6.x. Install 7.0 with `sudo apt install linux-generic-hwe-24.04` and reboot
+  - Ubuntu 24.04 comes with kernel 6.x. Install 7.0 with `sudo apt install linux-generic-hwe-24.04` and reboot
 - `podman`:
   - Fedora 42+: `sudo dnf install -y podman`
   - Ubuntu 24.04/26.04: `sudo apt update && sudo apt install -y podman`
