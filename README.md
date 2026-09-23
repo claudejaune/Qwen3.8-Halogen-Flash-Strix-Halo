@@ -61,10 +61,8 @@ Point your agent to the IP address and port you chose (`http://127.0.0.1:8731/v1
 
 ## Documentation
 
-- [docs/how-it-works.md](docs/how-it-works.md) — what run.sh passes to the
-  engine, the kernel params, and why there is no API key
-- [docs/troubleshooting.md](docs/troubleshooting.md) — out of memory at
-  startup, slow long prompts, kernel version, and other problems
+- [How it works](docs/how-it-works.md): deets for nerds and clankers
+- [Troubleshooting](docs/troubleshooting.md): if you get stuck
 
 ## Credits
 
