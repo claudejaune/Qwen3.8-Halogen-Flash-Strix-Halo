@@ -286,8 +286,7 @@ echo ""
 # ── Step 3: Vision (multimodal) ──────────────────────────────────────────────
 info "=== Step 3: Vision (multimodal) ==="
 echo "  The model reads images when the vision sidecar (0.84 GiB, fetched"
-echo "  beside the weights) is loaded. An image costs ~1,000-2,500 tokens of"
-echo "  context and 5-25 s of processing depending on resolution."
+echo "  beside the weights) is loaded."
 echo ""
 echo "  1) Enable vision"
 echo "  2) Disable vision — text only"
@@ -304,9 +303,7 @@ echo ""
 
 # ── Step 4: Concurrency ──────────────────────────────────────────────────────
 info "=== Step 4: Concurrency ==="
-echo "  Conversations generating at once. Each stream runs at its own speed;"
-echo "  more streams trade per-stream speed for admitting more clients."
-echo "  Past 8 slots total throughput stops growing."
+echo "  Maximum simultaneous conversations. 4-8 recommended"
 echo ""
 while true; do
     ask_number HALOGEN_KV_SLOTS "Slots" "4"
@@ -579,10 +576,6 @@ else
             incomplete) echo "    incomplete: $file ($detail)" ;;
         esac
     done <<<"$WEIGHTS_STATUS"
-    echo ""
-    echo "  Downloading now means ./run.sh starts the server instead of a"
-    echo "  multi-hour transfer. It resumes if interrupted, and it does not"
-    echo "  need the GPU."
     echo ""
     if [[ "$VISION_FLAG" != "1" ]]; then
         echo "  Vision is off, so its sidecar (0.84 GiB) and the unused speed"
