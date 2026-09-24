@@ -3,6 +3,10 @@
 # verify the checkpoint's integrity, and optionally update the pinned image
 # tag in config.env.
 #
+# Usage: ./refresh.sh [--image <tag|reference>] [--verify]
+#   --image   set the engine version in config.env without prompting
+#   --verify  hash the local checkpoint against the repo (a few minutes)
+#
 # There is no build tooling in this repo, so this script is
 # small by design: pull the image, verify the weights, and rewrite
 # HALOGEN_IMAGE if you want a different tag.
@@ -20,6 +24,29 @@ HASH_FILE="checkpoint.sha256"
 . "$SCRIPT_DIR/lib/common.sh"
 
 require_not_root
+
+# ── Flags ────────────────────────────────────────────────────────────────────
+IMAGE_OVERRIDE=""
+VERIFY=false
+while (( $# )); do
+    case "$1" in
+        --image)
+            if [[ -z "${2:-}" ]]; then
+                err "--image needs a value: a tag such as 0.13.5, or a full image reference."
+            fi
+            IMAGE_OVERRIDE="$2"
+            shift 2
+            ;;
+        --verify)
+            VERIFY=true
+            shift
+            ;;
+        *)
+            echo "Error: unknown option: $1 (usage: ./refresh.sh [--image <tag>] [--verify])" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     err "config.env not found. Run ./setup.sh first, then ./refresh.sh after git pull."
@@ -65,48 +92,50 @@ rewrite_config_key() {
 }
 
 # ── Image ────────────────────────────────────────────────────────────────────
-# Enter takes the recommended version, which upgrades a config.env that pins
-# an older one. A bare tag such as 0.13.5 or :latest is expanded to a full
-# reference, so nothing has to be typed in full.
+# --image sets the version outright. Otherwise nothing is asked when config.env
+# pins the recommended version and the image is already on disk. A bare tag
+# such as 0.13.5 or :latest is expanded to a full reference.
 info "=== Image ==="
-echo "  config.env pins:      $HALOGEN_IMAGE"
-echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
-echo ""
-if [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
-    echo "  Press Enter to keep it."
-else
-    echo "  Press Enter to update to the recommended version."
-fi
-ask IMAGE_CHOICE "Image" "$HALOGEN_RECOMMENDED_IMAGE"
-NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
 
-IMAGE_CHANGED=false
-if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
-    ok "Keeping $HALOGEN_IMAGE."
-else
-    backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
-    HALOGEN_IMAGE="$NEW_IMAGE"
-    IMAGE_CHANGED=true
-    ok "config.env updated to $HALOGEN_IMAGE."
-    ok "Backup saved as: $backup_path"
-fi
-
-if have podman; then
-    PULL_DEFAULT=n
-    if [[ "$IMAGE_CHANGED" == "true" ]]; then
-        PULL_DEFAULT=y
-    fi
-    if ask_yes_no "  Pull $HALOGEN_IMAGE now?" "$PULL_DEFAULT"; then
-        if podman pull "$HALOGEN_IMAGE"; then
-            ok "Image refreshed."
-        else
-            warn "Pull failed. The old image (if any) is still available."
-        fi
+if [[ -n "$IMAGE_OVERRIDE" ]]; then
+    NEW_IMAGE="$(normalize_image "$IMAGE_OVERRIDE")"
+    if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
+        ok "config.env already pins $HALOGEN_IMAGE."
     else
-        echo "  Skipped. run.sh pulls automatically if the image is missing."
+        backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
+        HALOGEN_IMAGE="$NEW_IMAGE"
+        ok "config.env updated to $HALOGEN_IMAGE."
+        ok "Backup saved as: $backup_path"
     fi
+elif [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
+    ok "config.env is on the recommended version ($HALOGEN_IMAGE)."
 else
+    echo "  config.env pins:      $HALOGEN_IMAGE"
+    echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
+    echo ""
+    echo "  Press Enter to update to the recommended version."
+    ask IMAGE_CHOICE "Image" "$HALOGEN_RECOMMENDED_IMAGE"
+    NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
+    if [[ "$NEW_IMAGE" != "$HALOGEN_IMAGE" ]]; then
+        backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
+        HALOGEN_IMAGE="$NEW_IMAGE"
+        ok "config.env updated to $HALOGEN_IMAGE."
+        ok "Backup saved as: $backup_path"
+    fi
+fi
+
+# A pinned version tag is immutable, so a present image is current. `latest`
+# can move, so it is always offered.
+if ! have podman; then
     warn "podman not installed — skipping image refresh."
+elif podman image exists "$HALOGEN_IMAGE" 2>/dev/null && [[ "$HALOGEN_IMAGE" != *:latest ]]; then
+    ok "Image present: $HALOGEN_IMAGE"
+elif ask_yes_no "  Pull $HALOGEN_IMAGE now?" y; then
+    if podman pull "$HALOGEN_IMAGE"; then
+        ok "Image refreshed."
+    else
+        warn "Pull failed. The old image (if any) is still available."
+    fi
 fi
 echo ""
 
@@ -192,7 +221,7 @@ if [[ -n "$REMOTE_CK" ]]; then
         warn "The repo's checkpoint differs from the one pinned in config.env."
         echo "    pinned:  $CHECKPOINT_SHA256"
         echo "    current: $REMOTE_CK"
-        if file_usable "$CK_PATH" && ask_yes_no "  Hash your local file first to see which state it is in (a few minutes)?" n; then
+        if [[ "$VERIFY" == "true" ]] && file_usable "$CK_PATH"; then
             if LOCAL="$(hash_checkpoint)"; then
                 if [[ "$LOCAL" == "$REMOTE_CK" ]]; then
                     ok "Local file IS the new version — only config.env was stale."
@@ -214,7 +243,7 @@ if [[ -n "$REMOTE_CK" ]]; then
         if (( CK_GIB < 110 )); then
             warn "The checkpoint is only ${CK_GIB} GiB (expect ~115 GiB) —"
             warn "almost certainly incomplete. Re-download it."
-        elif ask_yes_no "  Verify the local checkpoint against the repo (a few minutes)?" n; then
+        elif [[ "$VERIFY" == "true" ]]; then
             if verify_checkpoint "$REMOTE_CK"; then
                 if [[ -z "${CHECKPOINT_SHA256:-}" ]]; then
                     rewrite_config_key CHECKPOINT_SHA256 "$REMOTE_CK" >/dev/null
@@ -238,20 +267,14 @@ else
             warn "The checkpoint is only ${CK_GIB} GiB (expect ~115 GiB) —"
             warn "almost certainly incomplete. Re-download it."
         fi
-        if [[ -n "${CHECKPOINT_SHA256:-}" ]]; then
-            echo "  config.env has a CHECKPOINT_SHA256 — verify against it?"
-            if ask_yes_no "  Compute sha256 now (a few minutes)?" n; then
+        if [[ "$VERIFY" == "true" ]]; then
+            if [[ -n "${CHECKPOINT_SHA256:-}" ]]; then
                 verify_checkpoint "$CHECKPOINT_SHA256" || true
-            fi
-        elif [[ -f "$MODELS_DIR/$HASH_FILE" ]]; then
-            RECORDED="$(cut -d' ' -f1 "$MODELS_DIR/$HASH_FILE")"
-            echo "  A recorded hash exists ($MODELS_DIR/$HASH_FILE) — verify against it?"
-            if ask_yes_no "  Compute sha256 now (a few minutes)?" n; then
+            elif [[ -f "$MODELS_DIR/$HASH_FILE" ]]; then
+                RECORDED="$(cut -d' ' -f1 "$MODELS_DIR/$HASH_FILE")"
                 verify_checkpoint "$RECORDED" || true
-            fi
-        else
-            echo "  No checksum recorded. One lets later refreshes detect corruption."
-            if ask_yes_no "  Record this checkpoint's sha256 now (a few minutes)?" n; then
+            else
+                echo "  No checksum recorded. One lets later refreshes detect corruption."
                 if H="$(hash_checkpoint)"; then
                     printf '%s  %s\n' "$H" "$CHECKPOINT" > "$MODELS_DIR/$HASH_FILE"
                     ok "Hash recorded: $MODELS_DIR/$HASH_FILE"
