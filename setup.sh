@@ -103,6 +103,43 @@ install_podman() {
     ok "Podman installed."
 }
 
+# ── tuned (applies the accelerator-performance profile) ──────────────────────
+# No supported distro ships tuned active out of the box: Ubuntu 24.04 keeps it
+# in universe, Fedora and Arch ship it but do not install it by default. Without
+# this the profile step further down silently vanishes on a fresh install, and
+# the user never learns the option was there.
+install_tuned() {
+    echo "  The accelerator-performance profile is applied by 'tuned'."
+    echo ""
+    case "$OS_ID" in
+        fedora)
+            echo "  Will run: sudo dnf install -y tuned" ;;
+        ubuntu|debian)
+            echo "  Will run: sudo apt update && sudo apt install -y tuned" ;;
+        arch)
+            echo "  Will run: sudo pacman -S --needed tuned" ;;
+        *)
+            echo "  No automatic install for '$OS_ID'. Install the 'tuned'"
+            echo "  package with your distro's package manager, then re-run"
+            echo "  setup.sh to apply the profile." ;;
+    esac
+    if ! ask_yes_no "  Install now?" y; then
+        warn "Skipped. The server runs without it; you just don't get the profile."
+        return 1
+    fi
+    case "$OS_ID" in
+        fedora)
+            sudo dnf install -y tuned || return 1 ;;
+        ubuntu|debian)
+            sudo apt update && sudo apt install -y tuned || return 1 ;;
+        arch)
+            sudo pacman -S --needed tuned || return 1 ;;
+        *)
+            return 1 ;;
+    esac
+    ok "tuned installed (the package enables and starts tuned.service)."
+}
+
 echo ""
 info "=== Container tooling (detected: $OS_LABEL) ==="
 if ! have podman; then
@@ -256,9 +293,37 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
   sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
   sudo reboot"
     elif [[ -f /etc/default/grub ]]; then
-        BOOT_INSTRUCTIONS="  # Ubuntu/Debian (GRUB): one command appends the missing params and rebuilds
-  # grub.cfg (it appends — run it once):
-  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && { sudo update-grub 2>/dev/null || sudo grub2-mkconfig -o /boot/grub2/grub.cfg; }
+        # The rebuild command and the grub.cfg path differ by family.
+        # Debian/Ubuntu: update-grub (from grub2-common), config at
+        # /boot/grub/grub.cfg. RPM distros: grub2-mkconfig, config at
+        # /boot/grub2/grub.cfg. grubby normally catches the RPM family
+        # above; this is the path when it is not installed.
+        case "$OS_ID" in
+            ubuntu|debian|arch)
+                # Arch and Debian/Ubuntu share the grub-mkconfig name and the
+                # /boot/grub/grub.cfg location.
+                if have update-grub; then
+                    GRUB_REBUILD="sudo update-grub"
+                else
+                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
+                fi
+                ;;
+            fedora|rhel|centos|rocky|almalinux)
+                GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
+                ;;
+            *)
+                if have update-grub; then
+                    GRUB_REBUILD="sudo update-grub"
+                elif have grub2-mkconfig; then
+                    GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
+                else
+                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
+                fi
+                ;;
+        esac
+        BOOT_INSTRUCTIONS="  # GRUB (/etc/default/grub): one command appends the missing params and
+  # rebuilds grub.cfg (it appends — run it once):
+  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD
   sudo reboot"
     else
         BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
@@ -268,6 +333,12 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
 fi
 
 # Offer tuned profile (can be changed at runtime, no reboot needed)
+if ! have tuned-adm; then
+    warn "'tuned' not found — it is what applies the accelerator-performance profile."
+    if install_tuned; then
+        hash -r 2>/dev/null || true
+    fi
+fi
 if have tuned-adm; then
     CURRENT_PROFILE=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || echo "unknown")
     if [[ "$CURRENT_PROFILE" != "accelerator-performance" ]]; then
@@ -275,12 +346,14 @@ if have tuned-adm; then
             if sudo tuned-adm profile accelerator-performance 2>/dev/null; then
                 ok "tuned profile set (no reboot needed)."
             else
-                warn "Failed to set tuned profile."
+                warn "Failed to set tuned profile. Check 'systemctl status tuned'."
             fi
         fi
     else
         ok "tuned profile already accelerator-performance."
     fi
+else
+    warn "No tuned. The server runs without it — skipping costs only the profile."
 fi
 echo ""
 
