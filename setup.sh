@@ -71,141 +71,112 @@ case "$OS_ID" in
     *)             OS_LABEL="${PRETTY_NAME:-$OS_ID}" ;;
 esac
 
-# ── Container tooling (podman only — no local builds) ────────────────────────
-install_podman() {
-    echo "  This project runs the server in a podman container."
-    echo ""
+# ── Package installs ─────────────────────────────────────────────────────────
+# Every package this setup needs carries the same name on all three distros, so
+# one installer covers them and only the command varies.
+pkg_install() {
     case "$OS_ID" in
         fedora)
-            echo "  Will run: sudo dnf install -y podman" ;;
+            sudo dnf install -y "$@" ;;
         ubuntu|debian)
-            echo "  Will run: sudo apt update && sudo apt install -y podman" ;;
+            sudo apt update && sudo apt install -y "$@" ;;
         arch)
-            echo "  Will run: sudo pacman -S --needed podman" ;;
-        *)
-            echo "  No automatic install for '$OS_ID'. Install podman with your"
-            echo "  distro's package manager, then re-run setup.sh." ;;
-    esac
-    if ! ask_yes_no "  Install now?" y; then
-        warn "Skipped. Install podman before running run.sh."
-        return 1
-    fi
-    case "$OS_ID" in
-        fedora)
-            sudo dnf install -y podman || return 1 ;;
-        ubuntu|debian)
-            sudo apt update && sudo apt install -y podman || return 1 ;;
-        arch)
-            sudo pacman -S --needed podman || return 1 ;;
+            sudo pacman -S --needed "$@" ;;
         *)
             return 1 ;;
     esac
-    ok "Podman installed."
 }
 
-# ── tuned (applies the accelerator-performance profile) ──────────────────────
-# No supported distro ships tuned active out of the box: Ubuntu 24.04 keeps it
-# in universe, Fedora and Arch ship it but do not install it by default. Without
-# this the profile step further down silently vanishes on a fresh install, and
-# the user never learns the option was there.
-install_tuned() {
-    echo "  The accelerator-performance profile is applied by 'tuned'."
-    echo ""
+# The same command as the user would type it, shown before asking.
+pkg_install_display() {
     case "$OS_ID" in
         fedora)
-            echo "  Will run: sudo dnf install -y tuned" ;;
+            printf 'sudo dnf install -y %s' "$*" ;;
         ubuntu|debian)
-            echo "  Will run: sudo apt update && sudo apt install -y tuned" ;;
+            printf 'sudo apt update && sudo apt install -y %s' "$*" ;;
         arch)
-            echo "  Will run: sudo pacman -S --needed tuned" ;;
+            printf 'sudo pacman -S --needed %s' "$*" ;;
         *)
-            echo "  No automatic install for '$OS_ID'. Install the 'tuned'"
-            echo "  package with your distro's package manager, then re-run"
-            echo "  setup.sh to apply the profile." ;;
+            printf '(no automatic install for %s)' "$OS_ID" ;;
     esac
-    if ! ask_yes_no "  Install now?" y; then
-        warn "Skipped. The server runs without it; you just don't get the profile."
-        return 1
-    fi
-    case "$OS_ID" in
-        fedora)
-            sudo dnf install -y tuned || return 1 ;;
-        ubuntu|debian)
-            sudo apt update && sudo apt install -y tuned || return 1 ;;
-        arch)
-            sudo pacman -S --needed tuned || return 1 ;;
-        *)
-            return 1 ;;
-    esac
-    ok "tuned installed (the package enables and starts tuned.service)."
 }
 
-# ── curl (repo integrity checks and the fallback downloader) ─────────────────
-# Every full desktop/server image ships curl, but the minimal ones do not, and
-# setup.sh needs it twice over: hf_remote_sha256() reads the model repo's
-# sha256 list through it, and it is the only downloader left when neither
-# 'hf' nor the engine image is available. Without it the integrity check
-# reports "offline?" when nothing was ever attempted.
-install_curl() {
-    echo "  'curl' reads the model repo's sha256 list, and it is the fallback"
-    echo "  downloader when neither 'hf' nor the engine image is available."
+# sudo is a prerequisite, never something this script configures. Who holds
+# privilege, and under what policy, belongs to the owner of the machine.
+require_sudo() {
+    have sudo && return 0
     echo ""
-    case "$OS_ID" in
-        fedora)
-            echo "  Will run: sudo dnf install -y curl" ;;
-        ubuntu|debian)
-            echo "  Will run: sudo apt update && sudo apt install -y curl" ;;
-        arch)
-            echo "  Will run: sudo pacman -S --needed curl" ;;
-        *)
-            echo "  No automatic install for '$OS_ID'. Install 'curl' with your"
-            echo "  distro's package manager, then re-run setup.sh." ;;
-    esac
-    if ! ask_yes_no "  Install now?" y; then
-        warn "Skipped. Checkpoint integrity pinning and the curl download"
-        warn "path will be unavailable."
-        return 1
-    fi
-    case "$OS_ID" in
-        fedora)
-            sudo dnf install -y curl || return 1 ;;
-        ubuntu|debian)
-            sudo apt update && sudo apt install -y curl || return 1 ;;
-        arch)
-            sudo pacman -S --needed curl || return 1 ;;
-        *)
-            return 1 ;;
-    esac
-    ok "curl installed."
+    warn "'sudo' is not installed, and setup.sh needs it to install packages."
+    echo ""
+    echo "  Set it up yourself, then re-run ./setup.sh. On Arch, as root:"
+    echo ""
+    echo "      pacman -S --needed sudo"
+    echo "      usermod -aG wheel $TARGET_USER"
+    echo "      visudo -f /etc/sudoers.d/wheel      # and add this one line:"
+    echo "          %wheel ALL=(ALL:ALL) ALL"
+    echo ""
+    echo "  Then log out, log back in as $TARGET_USER, and run ./setup.sh again."
+    exit 1
 }
+
+# Everything setup.sh installs, checked the same way on every distro.
+# Format: "<command>:<package>:<what it is for>". The command is what gets
+# tested — tuned installs tuned-adm, and tuned-adm is what setup calls.
+REQUIRED_TOOLS=(
+    "git:git:cloning this repo and running ./refresh.sh after a git pull"
+    "curl:curl:reading the model repo's sha256 list, and the fallback downloader"
+    "podman:podman:running the engine container"
+    "tuned-adm:tuned:applying the accelerator-performance profile"
+)
 
 echo ""
-info "=== Container tooling (detected: $OS_LABEL) ==="
-if ! have podman; then
-    warn "'podman' not found."
-    if install_podman; then
+info "=== Required tools (detected: $OS_LABEL) ==="
+
+TARGET_USER="$(id -un)"
+require_sudo
+
+# Set by the GPU group step and the kernel step; read by the reboot gate below.
+NEEDS_RELOGIN=false
+NEEDS_REBOOT_NOW=false
+
+missing_pkgs=()
+for entry in "${REQUIRED_TOOLS[@]}"; do
+    cmd="${entry%%:*}"
+    rest="${entry#*:}"
+    pkg="${rest%%:*}"
+    why="${rest#*:}"
+    if have "$cmd"; then
+        ok "$pkg present"
+    else
+        printf '  %-8s missing — %s\n' "$pkg" "$why"
+        missing_pkgs+=("$pkg")
+    fi
+done
+
+if ((${#missing_pkgs[@]} > 0)); then
+    echo ""
+    echo "  Will run: $(pkg_install_display "${missing_pkgs[@]}")"
+    if ask_yes_no "  Install these now?" y; then
+        pkg_install "${missing_pkgs[@]}" || warn "The package manager reported a failure."
         hash -r 2>/dev/null || true
     fi
-fi
-if have podman; then
-    ok "Using: podman"
-else
-    warn "Podman incomplete. run.sh will not work until it is installed."
 fi
 
-# ── curl: needed before the first repo check ─────────────────────────────────
-if ! have curl; then
-    warn "'curl' not found."
-    if install_curl; then
-        hash -r 2>/dev/null || true
+# Required means required: re-check rather than trust the install exit code.
+still_missing=()
+for entry in "${REQUIRED_TOOLS[@]}"; do
+    cmd="${entry%%:*}"
+    rest="${entry#*:}"
+    pkg="${rest%%:*}"
+    if ! have "$cmd"; then
+        still_missing+=("$pkg")
     fi
+done
+if ((${#still_missing[@]} > 0)); then
+    err "Still missing: ${still_missing[*]}.
+setup.sh needs all of them. Install them and re-run ./setup.sh."
 fi
-if have curl; then
-    ok "Using: curl"
-else
-    warn "No curl: the repo's sha256 list cannot be read and there is no"
-    warn "fallback downloader. 'hf' or the engine image still cover downloads."
-fi
+ok "All required tools are in place."
 
 # ── Detect hardware / kernel ─────────────────────────────────────────────────
 echo ""
@@ -218,15 +189,6 @@ echo ""
 MEM_TOTAL_GIB=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 MEM_AVAIL_GIB=$(awk '/MemAvailable/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 info "Total RAM: ${MEM_TOTAL_GIB} GiB  Available: ${MEM_AVAIL_GIB} GiB"
-
-KERNEL_RELEASE="$(uname -r)"
-KERNEL_MAJOR="${KERNEL_RELEASE%%.*}"
-if ! [[ "$KERNEL_MAJOR" =~ ^[0-9]+$ ]] || (( KERNEL_MAJOR < 7 )); then
-    err "Kernel $KERNEL_RELEASE is too old. halogen-flash-server needs kernel 7.0 or
-newer (the read-only GPU registration of the checkpoint is refused on 6.x).
-Boot a newer kernel and re-run ./setup.sh."
-fi
-ok "Kernel $KERNEL_RELEASE (7.0+ required)."
 
 # ── GPU device access ────────────────────────────────────────────────────────
 # The engine opens /dev/kfd and a /dev/dri/render* node. On Fedora and Arch the
@@ -249,7 +211,6 @@ if [[ -z "$GPU_ACCESS_REASON" ]]; then
     ok "Your user can access the GPU devices."
 else
     warn "GPU access check failed: $GPU_ACCESS_REASON"
-    TARGET_USER="$(id -un)"
     echo "  The engine cannot start without GPU access. The usual cause is group"
     echo "  membership; AMD's documented fix adds both groups (the -a keeps your"
     echo "  existing ones):"
@@ -258,13 +219,14 @@ else
     echo ""
     if have sudo && ask_yes_no "  Run that now?" y; then
         if sudo usermod -aG render,video "$TARGET_USER"; then
-            ok "Membership updated."
+            ok "Membership updated — it takes effect in a new session."
+            NEEDS_RELOGIN=true
         else
-            warn "usermod failed. Run it yourself, then re-run ./setup.sh."
+            err "usermod failed. Run it yourself, then re-run ./setup.sh."
         fi
+    else
+        err "GPU access is required. Add the groups yourself, then re-run ./setup.sh."
     fi
-    err "Group membership takes effect only in a new session.
-Boot (recommended) or log out and back in, then re-run ./setup.sh to finish setup."
 fi
 echo ""
 
@@ -292,6 +254,73 @@ done
 info "Kernel params: $(( ${#EXPECTED_PARAMS[@]} - ${#MISSING_PARAMS[@]} ))/${#EXPECTED_PARAMS[@]} of the recommended set are active"
 if ((${#MISSING_PARAMS[@]} > 0)); then
     warn "Missing from your boot command line: ${MISSING_PARAMS[*]}"
+fi
+echo ""
+# ── Kernel version ───────────────────────────────────────────────────────────
+# Checked after the GPU groups so that one reboot can fix both. Ubuntu gets an
+# offer to install the HWE kernel; other distros are told, not installed for.
+KERNEL_RELEASE="$(uname -r)"
+KERNEL_MAJOR="${KERNEL_RELEASE%%.*}"
+KERNEL_TOO_OLD=false
+if ! [[ "$KERNEL_MAJOR" =~ ^[0-9]+$ ]] || (( KERNEL_MAJOR < 7 )); then
+    KERNEL_TOO_OLD=true
+fi
+
+if [[ "$KERNEL_TOO_OLD" == "true" && "$OS_ID" == "ubuntu" ]]; then
+    echo ""
+    warn "Kernel $KERNEL_RELEASE is too old — the engine needs 7.0 or newer"
+    warn "(the read-only GPU registration of the checkpoint is refused on 6.x)."
+    echo ""
+    echo "  Ubuntu ships 7.0 in the HWE kernel."
+    echo "  Will run: sudo apt update && sudo apt install -y linux-generic-hwe-24.04"
+    echo ""
+    if ask_yes_no "  Install it now?" y; then
+        if sudo apt update && sudo apt install -y linux-generic-hwe-24.04; then
+            ok "HWE kernel installed."
+            NEEDS_REBOOT_NOW=true
+        else
+            err "The HWE kernel did not install. Install a 7.0+ kernel yourself,
+then re-run ./setup.sh."
+        fi
+    else
+        err "Setup cannot continue on kernel $KERNEL_RELEASE. Install a 7.0+
+kernel (sudo apt install -y linux-generic-hwe-24.04), reboot into it, then
+re-run ./setup.sh."
+    fi
+elif [[ "$KERNEL_TOO_OLD" == "true" ]]; then
+    err "Kernel $KERNEL_RELEASE is too old. halogen-flash-server needs kernel
+7.0 or newer (the read-only GPU registration of the checkpoint is refused on
+6.x). Boot a newer kernel and re-run ./setup.sh."
+else
+    ok "Kernel $KERNEL_RELEASE (7.0+ required)."
+fi
+
+# ── One reboot covers everything that needs one ──────────────────────────────
+# A new kernel and new group membership both land at the same boot, and nothing
+# is configured until both are in effect.
+if [[ "${NEEDS_REBOOT_NOW}" == "true" || "${NEEDS_RELOGIN}" == "true" ]]; then
+    echo ""
+    echo "============================================"
+    warn "REBOOT REQUIRED — SETUP PAUSED BEFORE ANY CHANGES"
+    echo "============================================"
+    echo ""
+    if [[ "${NEEDS_REBOOT_NOW}" == "true" ]]; then
+        echo "  Reboot into the new kernel."
+    fi
+    if [[ "${NEEDS_RELOGIN}" == "true" ]]; then
+        echo "  The render and video groups were added to $TARGET_USER; a reboot"
+        echo "  starts a new session where they are in effect."
+    fi
+    if ((${#MISSING_PARAMS[@]} > 0)); then
+        echo ""
+        echo "  Also missing from your boot command line:"
+        echo "      ${MISSING_PARAMS[*]}"
+        echo "  The next run prints the exact commands to add them."
+    fi
+    echo ""
+    echo "  Reboot now, then run ./setup.sh again to finish setup."
+    echo ""
+    exit 0
 fi
 echo ""
 
@@ -385,28 +414,19 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     fi
 fi
 
-# Offer tuned profile (can be changed at runtime, no reboot needed)
-if ! have tuned-adm; then
-    warn "'tuned' not found — it is what applies the accelerator-performance profile."
-    if install_tuned; then
-        hash -r 2>/dev/null || true
-    fi
-fi
-if have tuned-adm; then
-    CURRENT_PROFILE=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || echo "unknown")
-    if [[ "$CURRENT_PROFILE" != "accelerator-performance" ]]; then
-        if ask_yes_no 'Set tuned profile to "accelerator-performance"? (Boosts performance)' y; then
-            if sudo tuned-adm profile accelerator-performance 2>/dev/null; then
-                ok "tuned profile set (no reboot needed)."
-            else
-                warn "Failed to set tuned profile. Check 'systemctl status tuned'."
-            fi
+# Switch to the tuned profile. The package itself is already installed (checked
+# up front); this only selects the profile, which takes effect immediately.
+CURRENT_PROFILE=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || echo "unknown")
+if [[ "$CURRENT_PROFILE" != "accelerator-performance" ]]; then
+    if ask_yes_no 'Set tuned profile to "accelerator-performance"? (Boosts performance)' y; then
+        if sudo tuned-adm profile accelerator-performance 2>/dev/null; then
+            ok "tuned profile set (no reboot needed)."
+        else
+            warn "Failed to set tuned profile. Check 'systemctl status tuned'."
         fi
-    else
-        ok "tuned profile already accelerator-performance."
     fi
 else
-    warn "No tuned. The server runs without it — skipping costs only the profile."
+    ok "tuned profile already accelerator-performance."
 fi
 echo ""
 
