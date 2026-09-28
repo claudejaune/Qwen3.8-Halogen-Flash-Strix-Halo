@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.1.0-rc.1 - 2026-09-28
+
+Major additions. The scripts are now tuned so that a user with a fresh Ubuntu 24.04, Fedora 44, or Arch install can run `setup.sh` and get *everything* they need to run Qwen 3.8 Flash through Halogen Server
+
+- `setup.sh` checks `git`, `curl`, `podman`, and `tuned` on every distro and installs any that are missing in one step
+- A missing `sudo` stops setup and hands over the exact commands to set it up
+- On Ubuntu, setup offers to install the HWE kernel to reach kernel 7.0
+- A new kernel and new GPU group memberships now need one reboot instead of two
+- Downloads fall back to `uvx hf` when the host has no `hf` CLI
+
 ## 1.0.0-rc.4 - 2026-09-24
 
 - `refresh.sh` asks nothing when everything is up to date

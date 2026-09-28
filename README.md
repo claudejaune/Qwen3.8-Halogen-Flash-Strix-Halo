@@ -10,12 +10,8 @@ No prior experience with running local AI models needed. The scripts guide you t
 
 - AMD Strix Halo with 128 GB RAM
 - 130 GiB free disk minimum
-- Kernel 7.0 or newer
-  - Ubuntu 24.04 comes with kernel 6.x. Install 7.0 with `sudo apt install linux-generic-hwe-24.04` and reboot
-- `podman`:
-  - Fedora 42+: `sudo dnf install -y podman`
-  - Ubuntu 24.04/26.04: `sudo apt update && sudo apt install -y podman`
-  - Arch: `sudo pacman -S --needed podman`
+- `podman`, Kernel 7.0 or newer (handled by script if missing)
+- Arch Linux specific: `sudo` installed and configured (missing in minimal install)
 
 ### Set up and run
 
@@ -39,8 +35,12 @@ To stop the server, press Ctrl-c from the same terminal, or run `./stop.sh`.
 
 ## What setup.sh asks you
 
+It installs anything missing first. If that added a kernel or new group
+memberships, it stops for one reboot and you run it again — nothing is
+configured until the reboot lands. Then it asks:
+
 1. Network binding: `localhost` (default) or LAN — **the engine has no
-   authentication**, so a LAN server is open to your whole network. API key support is coming soon.
+   authentication**, so a LAN server is open to your whole network. API key support WIP.
 2. The port to run it on. Non-root ports only (1024-65535)
 3. Kernel boot params: prints exact commands if yours need changing (reboot required)
 4. Vision on/off

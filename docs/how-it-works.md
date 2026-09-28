@@ -23,36 +23,33 @@ container starts serving instead of downloading.
 
 ## What setup.sh does
 
-1. **Podman check** — detects your distro and offers to install `podman` if missing
-2. **Kernel check** — the engine needs **kernel 7.0+** (the read-only
-   registration of the checkpoint is refused on 6.x); setup refuses to
-   continue on an older running kernel
-3. **Kernel params** — checks the boot command line against the set halogen
-   was measured on and prints grubby/grub/systemd-boot commands if something
-   is missing; never modifies the bootloader itself. Offers the tuned
-   `accelerator-performance` profile when `tuned-adm` is installed (runtime,
-   no reboot)
-4. **GPU access check** — confirms your user can open `/dev/kfd` and a
-   `/dev/dri/render*` node. If not, it offers AMD's fix
-   (`sudo usermod -aG render,video $USER`) and then stops: the new groups apply
-   only in a fresh session, so reboot (or log out and back in) and re-run
-   setup. This is deliberately before `run.sh` — a host that cannot reach the
-   GPU is not ready to serve.
-5. **Questions** — network binding, port, vision, slots, and the weights
-   directory (preserved across re-runs)
-6. **Checkpoint state** — queries the HF repo for the checkpoint's current
+1. **sudo** — required to install anything. The script never configures it; a
+   missing `sudo` stops setup with the commands to set it up.
+2. **Tools** — checks `git`, `curl`, `podman`, and `tuned` on every distro and
+   installs any that are missing in one package-manager call.
+3. **GPU access** — confirms your user can open `/dev/kfd` and a
+   `/dev/dri/render*` node. If not, it runs AMD's fix
+   (`sudo usermod -aG render,video $USER`).
+4. **Kernel** — the engine needs **kernel 7.0+** (the read-only registration of
+   the checkpoint is refused on 6.x). On Ubuntu setup offers to install the HWE
+   kernel.
+5. **Reboot gate** — when step 3 or 4 changed something, setup stops here so one
+   reboot covers a new kernel and new group memberships together. Nothing is
+   configured until that reboot lands.
+6. **Kernel params** — checks the boot command line against the set halogen was
+   measured on and prints the grubby/grub/systemd-boot commands to run.
+7. **Questions** — network binding, port, the tuned `accelerator-performance`
+   profile, vision, slots, and the weights directory (preserved across re-runs).
+8. **Checkpoint state** — queries the HF repo for the checkpoint's current
    sha256 and, when a checkpoint is already on disk, verifies it against that
-   hash (or judges completeness by size)
-7. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
-   when a download is actually needed. Skipped when the checkpoint on disk
-   needs no download
-8. **Write config.env** — before anything is downloaded
-9. **Fetch phase** — offers to `podman pull` the image, then offers the
-   weights: the engine's own `hf download` command, run through the image's
-   bundled `hf`, resumable and with no GPU needed. Arrived files are checked
-   by exact byte size against the repo's live listing, and the checkpoint's
-   sha256 is offered as a final check. The download includes only the
-   sidecars the configuration uses
+   hash (or judges completeness by size).
+9. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
+   when a download is actually needed.
+10. **Write config.env** — before anything is downloaded.
+11. **Fetch phase** — offers to `podman pull` the image, then the weights.
+    Arrived files are checked by exact byte size against the repo's live listing,
+    and the checkpoint's sha256 is offered as a final check. The download
+    includes only the sidecars the configuration uses.
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, nothing has changed — run `./setup.sh` again to complete
@@ -116,7 +113,6 @@ podman run --rm --name halogen-flash \
   --device /dev/kfd --device /dev/dri \
   --group-add keep-groups \
   --ipc=host \
-  --ulimit memlock=-1:-1 \
   -p 127.0.0.1:8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
@@ -177,9 +173,9 @@ Two more things the engine asks of the host:
 
 The weights are fetched with the engine's own command,
 `HF_HUB_OFFLINE=0 hf download peonist-ai/halogen-qwen3.8-flash-next
---local-dir <MODELS_DIR>`, run by the host's `hf` CLI or by the image's
-bundled `hf` (`podman run --entrypoint /usr/local/bin/hf`, which needs no GPU
-devices). A resumable `curl` fetch covers a host with neither.
+--local-dir <MODELS_DIR>`, run by the host's `hf` CLI, by `uvx hf`, or by the
+image's bundled `hf` (`podman run --entrypoint /usr/local/bin/hf`, which needs
+no GPU devices). A resumable `curl` fetch covers a host with none of those.
 
 The download includes only the sidecars the configuration uses: the vision
 sidecar when vision is on, the quality overlay, and the tokenizer. It skips

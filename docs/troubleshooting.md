@@ -8,6 +8,27 @@ Quick fixes first:
 - **Kernel too old** — the engine needs kernel 7.0+. `./setup.sh` refuses to continue on an older running kernel; boot a newer one first.
 - **WSL2 is not a supported host.** The engine runs on the amdgpu/KFD stack; the GPU registration is refused there. Boot native Linux on the same hardware.
 
+## sudo is missing
+
+A minimal Arch install ships without `sudo`, and the scripts need it to install
+packages. They stop rather than configure privilege for you. As root:
+
+```bash
+pacman -S --needed sudo
+usermod -aG wheel youruser
+visudo -f /etc/sudoers.d/wheel
+```
+
+Add this one line to the file that opens:
+
+```
+%wheel ALL=(ALL:ALL) ALL
+```
+
+Log out, log back in as `youruser`, then run `./setup.sh`. Group membership is
+fixed when the session starts, so it does not apply to the terminal you ran
+`usermod` in.
+
 ## GPU not reachable in the container
 
 - Check the host: `ls /dev/kfd /dev/dri` (created by the amdgpu driver).
