@@ -392,9 +392,10 @@ hf_download_excludes() {
 #   HF_HUB_OFFLINE=0 hf download <repo> --local-dir <dir>
 # minus the files hf_download_excludes() names, so a config that does not use
 # the vision sidecar does not pay for it. Resumable. Preference: host `hf`,
-# then the engine image's own `hf` (podman; no GPU needed, so this works
-# before a kernel-param reboot), then resumable curl. Returns non-zero on
-# failure; whatever arrived is left in place so a re-run resumes.
+# then `uvx hf` (the same CLI, no install beyond uv), then the engine
+# image's own `hf` (podman; no GPU needed, so this works before a
+# kernel-param reboot), then resumable curl. Returns non-zero on failure;
+# whatever arrived is left in place so a re-run resumes.
 hf_download_models() {
     local dir="$1" image="${2:-}" vision="${3:-0}"
     mkdir -p "$dir"
@@ -412,6 +413,19 @@ hf_download_models() {
         info "Downloading the weights with the host 'hf' CLI (resumes if interrupted)..."
         HF_HUB_OFFLINE=0 hf download "$HF_REPO_ID" --local-dir "$dir" "${excludes[@]}"
         return $?
+    fi
+
+    # 'hf' on PyPI is the official CLI, published by Hugging Face and pinned
+    # to the huggingface_hub library — the same tool the host package provides.
+    # Tried before the container because it needs no image pull, but its first
+    # run resolves the package from PyPI: a failure there is not a failed
+    # download, so fall through instead of ending the attempt.
+    if have uvx; then
+        info "Downloading the weights with 'uvx hf' (resumes if interrupted)..."
+        if HF_HUB_OFFLINE=0 uvx hf download "$HF_REPO_ID" --local-dir "$dir" "${excludes[@]}"; then
+            return 0
+        fi
+        warn "'uvx hf' failed (PyPI unreachable?) — falling back to the image."
     fi
 
     if have podman && [[ -n "$image" ]] && podman image exists "$image" 2>/dev/null; then
@@ -438,7 +452,7 @@ hf_download_models() {
         return $?
     fi
 
-    warn "No downloader available: install 'hf', pull $image, or install curl."
+    warn "No downloader available: install 'hf' or 'uv', pull $image, or install curl."
     return 1
 }
 
@@ -514,12 +528,13 @@ _hf_curl_fetch_tree() {
 
 # hf_fetch_file <filename> <expected-sha256> <dest-dir>
 # Downloads one small file from the weights repo and verifies its sha256.
-# Uses `hf download` when the CLI is present; otherwise curl with resume
-# (-C -). For small files (the vision sidecar); the ~122 GiB weights tree
-# goes through hf_download_models().
+# Uses `hf download` when the CLI is present, then `uvx hf`, then curl with
+# resume (-C -). For small files (the vision sidecar); the ~122 GiB weights
+# tree goes through hf_download_models().
 hf_fetch_file() {
     local file="$1" expected="$2" dir="$3"
     local fpath="$dir/$file" actual
+    local fetched=false
 
     mkdir -p "$dir"
     # Already here and correct? Skip. Here but wrong? Delete and re-download.
@@ -538,15 +553,29 @@ hf_fetch_file() {
             warn "Download failed: $file"
             return 1
         fi
-    elif have curl; then
-        echo "  Downloading $file (hf CLI not found; resumable curl) ..."
-        if ! curl -fL -C - --retry 3 -o "$fpath" "$HF_RESOLVE_URL/$file"; then
-            warn "Download failed: $file"
+        fetched=true
+    elif have uvx; then
+        # The official 'hf' CLI from PyPI. Its first run resolves the
+        # package over the network, so a failure here is not a failed
+        # download: fall through to curl rather than give up.
+        if uvx hf download "$HF_REPO_ID" "$file" --local-dir "$dir"; then
+            fetched=true
+        else
+            warn "'uvx hf' failed (PyPI unreachable?) — trying curl."
+        fi
+    fi
+
+    if [[ "$fetched" != "true" ]]; then
+        if have curl; then
+            echo "  Downloading $file (no working hf CLI; resumable curl) ..."
+            if ! curl -fL -C - --retry 3 -o "$fpath" "$HF_RESOLVE_URL/$file"; then
+                warn "Download failed: $file"
+                return 1
+            fi
+        else
+            warn "No downloader found ('hf', 'uvx' or 'curl') — cannot download $file."
             return 1
         fi
-    else
-        warn "Neither 'hf' nor 'curl' found — cannot download $file."
-        return 1
     fi
     actual="$(file_sha256 "$fpath")"
     if [[ "$actual" != "$expected" ]]; then
