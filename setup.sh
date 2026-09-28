@@ -140,6 +140,45 @@ install_tuned() {
     ok "tuned installed (the package enables and starts tuned.service)."
 }
 
+# ── curl (repo integrity checks and the fallback downloader) ─────────────────
+# Every full desktop/server image ships curl, but the minimal ones do not, and
+# setup.sh needs it twice over: hf_remote_sha256() reads the model repo's
+# sha256 list through it, and it is the only downloader left when neither
+# 'hf' nor the engine image is available. Without it the integrity check
+# reports "offline?" when nothing was ever attempted.
+install_curl() {
+    echo "  'curl' reads the model repo's sha256 list, and it is the fallback"
+    echo "  downloader when neither 'hf' nor the engine image is available."
+    echo ""
+    case "$OS_ID" in
+        fedora)
+            echo "  Will run: sudo dnf install -y curl" ;;
+        ubuntu|debian)
+            echo "  Will run: sudo apt update && sudo apt install -y curl" ;;
+        arch)
+            echo "  Will run: sudo pacman -S --needed curl" ;;
+        *)
+            echo "  No automatic install for '$OS_ID'. Install 'curl' with your"
+            echo "  distro's package manager, then re-run setup.sh." ;;
+    esac
+    if ! ask_yes_no "  Install now?" y; then
+        warn "Skipped. Checkpoint integrity pinning and the curl download"
+        warn "path will be unavailable."
+        return 1
+    fi
+    case "$OS_ID" in
+        fedora)
+            sudo dnf install -y curl || return 1 ;;
+        ubuntu|debian)
+            sudo apt update && sudo apt install -y curl || return 1 ;;
+        arch)
+            sudo pacman -S --needed curl || return 1 ;;
+        *)
+            return 1 ;;
+    esac
+    ok "curl installed."
+}
+
 echo ""
 info "=== Container tooling (detected: $OS_LABEL) ==="
 if ! have podman; then
@@ -152,6 +191,20 @@ if have podman; then
     ok "Using: podman"
 else
     warn "Podman incomplete. run.sh will not work until it is installed."
+fi
+
+# ── curl: needed before the first repo check ─────────────────────────────────
+if ! have curl; then
+    warn "'curl' not found."
+    if install_curl; then
+        hash -r 2>/dev/null || true
+    fi
+fi
+if have curl; then
+    ok "Using: curl"
+else
+    warn "No curl: the repo's sha256 list cannot be read and there is no"
+    warn "fallback downloader. 'hf' or the engine image still cover downloads."
 fi
 
 # ── Detect hardware / kernel ─────────────────────────────────────────────────
