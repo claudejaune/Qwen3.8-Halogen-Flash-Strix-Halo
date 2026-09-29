@@ -262,9 +262,81 @@ for p in "${EXPECTED_PARAMS[@]}"; do
     fi
 done
 
+# The commands that add the missing params, plus the caution that goes with
+# touching the bootloader. Built here so the exact commands sit beside the check
+# that found the problem, in the reboot gate, and in the final summary.
+NEEDS_REBOOT=false
+BOOT_INSTRUCTIONS=""
+if ((${#MISSING_PARAMS[@]} > 0)); then
+    NEEDS_REBOOT=true
+    KERNEL_ARGS="${MISSING_PARAMS[*]}"
+    # Prefer grubby (Fedora/RHEL family): the recommended tool, works with BLS
+    # entries where grub2-mkconfig alone does not propagate kernel args.
+    if have grubby; then
+        BOOT_INSTRUCTIONS="  # Fedora/RHEL-family: grubby updates all entries (BLS + /etc/kernel/cmdline + grub.cfg)
+  sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'
+  sudo reboot"
+    elif [[ -d /boot/loader/entries || -f /etc/kernel/cmdline ]]; then
+        BOOT_INSTRUCTIONS="  # systemd-boot: add to /etc/kernel/cmdline:
+  #   $KERNEL_ARGS
+  #
+  # Then rebuild and reboot:
+  sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
+  sudo reboot"
+    elif [[ -f /etc/default/grub ]]; then
+        # The rebuild command and the grub.cfg path differ by family.
+        # Debian/Ubuntu: update-grub (from grub2-common), config at
+        # /boot/grub/grub.cfg. RPM distros: grub2-mkconfig, config at
+        # /boot/grub2/grub.cfg. grubby normally catches the RPM family
+        # above; this is the path when it is not installed.
+        case "$OS_ID" in
+            ubuntu|debian|arch)
+                # Arch and Debian/Ubuntu share the grub-mkconfig name and the
+                # /boot/grub/grub.cfg location.
+                if have update-grub; then
+                    GRUB_REBUILD="sudo update-grub"
+                else
+                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
+                fi
+                ;;
+            fedora|rhel|centos|rocky|almalinux)
+                GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
+                ;;
+            *)
+                if have update-grub; then
+                    GRUB_REBUILD="sudo update-grub"
+                elif have grub2-mkconfig; then
+                    GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
+                else
+                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
+                fi
+                ;;
+        esac
+        BOOT_INSTRUCTIONS="  # GRUB (/etc/default/grub): one command appends the missing params and
+  # rebuilds grub.cfg (it appends — run it once):
+  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD
+  sudo reboot"
+    else
+        BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
+  #   $KERNEL_ARGS
+  sudo reboot"
+    fi
+fi
+
+# The caution belongs with the commands, wherever they are shown.
+print_boot_instructions() {
+    warn "These commands modify your bootloader options, which is a persistent"
+    warn "change that applies at every boot. Consult your distro's documentation"
+    warn "if you are unsure."
+    echo ""
+    echo "$BOOT_INSTRUCTIONS"
+}
+
 info "Kernel params: $(( ${#EXPECTED_PARAMS[@]} - ${#MISSING_PARAMS[@]} ))/${#EXPECTED_PARAMS[@]} of the recommended set are active"
 if ((${#MISSING_PARAMS[@]} > 0)); then
     warn "Missing from your boot command line: ${MISSING_PARAMS[*]}"
+    echo ""
+    print_boot_instructions
 fi
 echo ""
 # ── Kernel version ───────────────────────────────────────────────────────────
@@ -326,7 +398,10 @@ if [[ "${NEEDS_REBOOT_NOW}" == "true" || "${NEEDS_RELOGIN}" == "true" ]]; then
         echo ""
         echo "  Also missing from your boot command line:"
         echo "      ${MISSING_PARAMS[*]}"
-        echo "  The next run prints the exact commands to add them."
+        echo ""
+        echo "  Add them before you reboot:"
+        echo ""
+        print_boot_instructions
     fi
     echo ""
     echo "  Reboot now, then run ./setup.sh again to finish setup."
@@ -366,65 +441,6 @@ while true; do
 done
 echo ""
 
-# ── Step 2: Kernel params notice ─────────────────────────────────────────────
-NEEDS_REBOOT=false
-BOOT_INSTRUCTIONS=""
-if ((${#MISSING_PARAMS[@]} > 0)); then
-    NEEDS_REBOOT=true
-    KERNEL_ARGS="${MISSING_PARAMS[*]}"
-    # Prefer grubby (Fedora/RHEL family): the recommended tool, works with BLS
-    # entries where grub2-mkconfig alone does not propagate kernel args.
-    if have grubby; then
-        BOOT_INSTRUCTIONS="  # Fedora/RHEL-family: grubby updates all entries (BLS + /etc/kernel/cmdline + grub.cfg)
-  sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'
-  sudo reboot"
-    elif [[ -d /boot/loader/entries || -f /etc/kernel/cmdline ]]; then
-        BOOT_INSTRUCTIONS="  # systemd-boot: add to /etc/kernel/cmdline:
-  #   $KERNEL_ARGS
-  #
-  # Then rebuild and reboot:
-  sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
-  sudo reboot"
-    elif [[ -f /etc/default/grub ]]; then
-        # The rebuild command and the grub.cfg path differ by family.
-        # Debian/Ubuntu: update-grub (from grub2-common), config at
-        # /boot/grub/grub.cfg. RPM distros: grub2-mkconfig, config at
-        # /boot/grub2/grub.cfg. grubby normally catches the RPM family
-        # above; this is the path when it is not installed.
-        case "$OS_ID" in
-            ubuntu|debian|arch)
-                # Arch and Debian/Ubuntu share the grub-mkconfig name and the
-                # /boot/grub/grub.cfg location.
-                if have update-grub; then
-                    GRUB_REBUILD="sudo update-grub"
-                else
-                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
-                fi
-                ;;
-            fedora|rhel|centos|rocky|almalinux)
-                GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
-                ;;
-            *)
-                if have update-grub; then
-                    GRUB_REBUILD="sudo update-grub"
-                elif have grub2-mkconfig; then
-                    GRUB_REBUILD="sudo grub2-mkconfig -o /boot/grub2/grub.cfg"
-                else
-                    GRUB_REBUILD="sudo grub-mkconfig -o /boot/grub/grub.cfg"
-                fi
-                ;;
-        esac
-        BOOT_INSTRUCTIONS="  # GRUB (/etc/default/grub): one command appends the missing params and
-  # rebuilds grub.cfg (it appends — run it once):
-  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD
-  sudo reboot"
-    else
-        BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
-  #   $KERNEL_ARGS
-  sudo reboot"
-    fi
-fi
-
 # Switch to the tuned profile. The package itself is already installed (checked
 # up front); this only selects the profile, which takes effect immediately.
 CURRENT_PROFILE=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || echo "unknown")
@@ -441,8 +457,8 @@ else
 fi
 echo ""
 
-# ── Step 3: Vision (multimodal) ──────────────────────────────────────────────
-info "=== Step 3: Vision (multimodal) ==="
+# ── Step 2: Vision (multimodal) ──────────────────────────────────────────────
+info "=== Step 2: Vision (multimodal) ==="
 echo "  The model reads images when the vision sidecar (0.84 GiB, fetched"
 echo "  beside the weights) is loaded."
 echo ""
@@ -459,8 +475,8 @@ else
 fi
 echo ""
 
-# ── Step 4: Concurrency ──────────────────────────────────────────────────────
-info "=== Step 4: Concurrency ==="
+# ── Step 3: Concurrency ──────────────────────────────────────────────────────
+info "=== Step 3: Concurrency ==="
 echo "  Maximum simultaneous conversations. 4-8 recommended"
 echo ""
 while true; do
@@ -483,8 +499,8 @@ while true; do
 done
 echo ""
 
-# ── Step 5: Weights location ─────────────────────────────────────────────────
-info "=== Step 5: Weights ==="
+# ── Step 4: Weights location ─────────────────────────────────────────────────
+info "=== Step 4: Weights ==="
 # The fallback default used when the user asks to choose a different
 # directory after the current one turned out not to exist.
 DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
@@ -613,7 +629,7 @@ if [[ -f "$CK_PATH" ]]; then
                 CK_NEEDS_DOWNLOAD=false
             else
                 warn "The file on disk does not match the repo (expected $REMOTE_CK_SHA,"
-                warn "got ${LOCAL_SHA:-<hash failed>}). It will be re-downloaded."
+                warn "got ${LOCAL_SHA:-<hash failed>})."
             fi
         else
             warn "Verification skipped — judging completeness by size alone."
@@ -626,11 +642,10 @@ if [[ -f "$CK_PATH" ]]; then
             CK_NEEDS_DOWNLOAD=false
         else
             warn "The file is only ~${CK_GIB} GiB (expect ~115) — incomplete."
-            info "It will be re-downloaded on first ./run.sh."
         fi
     fi
 else
-    info "No checkpoint on disk yet — downloads on first ./run.sh."
+    info "No checkpoint on disk yet."
 fi
 echo ""
 
@@ -870,7 +885,7 @@ if [[ "$NEEDS_REBOOT" == "true" ]]; then
     echo "  setup.sh does NOT modify your bootloader."
     echo "  Run these commands manually, then reboot:"
     echo ""
-    echo "$BOOT_INSTRUCTIONS"
+    print_boot_instructions
     echo ""
     echo "  After reboot, verify with:"
     printf '%s\n' "    cat /proc/cmdline | tr ' ' '\\n' | grep -E 'iommu|ttm|amdgpu'"
