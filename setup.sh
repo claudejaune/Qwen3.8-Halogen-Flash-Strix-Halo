@@ -266,6 +266,8 @@ done
 # touching the bootloader. Built here so the exact commands sit beside the check
 # that found the problem, in the reboot gate, and in the final summary.
 NEEDS_REBOOT=false
+BOOT_HANDLED=false
+BOOT_FAMILY="unknown"
 BOOT_INSTRUCTIONS=""
 if ((${#MISSING_PARAMS[@]} > 0)); then
     NEEDS_REBOOT=true
@@ -273,10 +275,12 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     # Prefer grubby (Fedora/RHEL family): the recommended tool, works with BLS
     # entries where grub2-mkconfig alone does not propagate kernel args.
     if have grubby; then
+        BOOT_FAMILY="grubby"
         BOOT_INSTRUCTIONS="  # Fedora/RHEL-family: grubby updates all entries (BLS + /etc/kernel/cmdline + grub.cfg)
   sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'
   sudo reboot"
     elif [[ -d /boot/loader/entries || -f /etc/kernel/cmdline ]]; then
+        BOOT_FAMILY="systemd-boot"
         BOOT_INSTRUCTIONS="  # systemd-boot: add to /etc/kernel/cmdline:
   #   $KERNEL_ARGS
   #
@@ -284,6 +288,7 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
   sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
   sudo reboot"
     elif [[ -f /etc/default/grub ]]; then
+        BOOT_FAMILY="grub"
         # The rebuild command and the grub.cfg path differ by family.
         # Debian/Ubuntu: update-grub (from grub2-common), config at
         # /boot/grub/grub.cfg. RPM distros: grub2-mkconfig, config at
@@ -323,6 +328,63 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     fi
 fi
 
+# True when every missing param is already written to the bootloader config.
+# They can be waiting for a reboot rather than missing, and appending them a
+# second time would duplicate them in the boot entry.
+boot_params_in_config() {
+    local p text=""
+    case "$BOOT_FAMILY" in
+        grubby)       text="$(sudo grubby --info=ALL 2>/dev/null)" ;;
+        systemd-boot) text="$(cat /etc/kernel/cmdline 2>/dev/null)" ;;
+        grub)         text="$(grep -E '^GRUB_CMDLINE_LINUX' /etc/default/grub 2>/dev/null)" ;;
+        *)            return 1 ;;
+    esac
+    for p in "${MISSING_PARAMS[@]}"; do
+        [[ "$text" == *"$p"* ]] || return 1
+    done
+    return 0
+}
+
+# Add the missing params with the tool that owns this bootloader, then confirm
+# they landed. Every path backs up the file it edits first, and a failed
+# confirmation returns non-zero so the caller falls back to the printed
+# commands and the backup stays on disk.
+apply_boot_params() {
+    local p rc=0 args="${MISSING_PARAMS[*]}" stamp current
+    stamp="$(date +%Y%m%d-%H%M%S)"
+
+    case "$BOOT_FAMILY" in
+        grubby)
+            sudo grubby --update-kernel=ALL --args="$args" || return 1
+            for p in "${MISSING_PARAMS[@]}"; do
+                sudo grubby --info=ALL 2>/dev/null | grep -Fq -- "$p" || rc=1
+            done
+            ;;
+        systemd-boot)
+            sudo cp -a /etc/kernel/cmdline "/etc/kernel/cmdline.$stamp.bak" || return 1
+            current="$(cat /etc/kernel/cmdline 2>/dev/null)" || return 1
+            printf '%s %s\n' "$current" "$args" | sudo tee /etc/kernel/cmdline >/dev/null || return 1
+            sudo kernel-install add "$(uname -r)" "/boot/vmlinuz-$(uname -r)" "/boot/initramfs-$(uname -r).img" || return 1
+            for p in "${MISSING_PARAMS[@]}"; do
+                grep -Fq -- "$p" /etc/kernel/cmdline 2>/dev/null || rc=1
+            done
+            ;;
+        grub)
+            sudo cp -a /etc/default/grub "/etc/default/grub.$stamp.bak" || return 1
+            sudo sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"\$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $args\"/" /etc/default/grub || return 1
+            # shellcheck disable=SC2086  # a fixed two-word command from the case above
+            $GRUB_REBUILD || return 1
+            for p in "${MISSING_PARAMS[@]}"; do
+                grep -Fq -- "$p" /etc/default/grub || rc=1
+            done
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    return $rc
+}
+
 # The caution belongs with the commands, wherever they are shown.
 print_boot_instructions() {
     warn "These commands change your bootloader configuration. The bootloader"
@@ -337,6 +399,19 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     warn "Missing from your boot command line: ${MISSING_PARAMS[*]}"
     echo ""
     print_boot_instructions
+    if [[ "$BOOT_FAMILY" != "unknown" ]]; then
+        if boot_params_in_config; then
+            info "They are already written to your bootloader — they apply at the next boot."
+            BOOT_HANDLED=true
+        elif ask_yes_no "  Apply them now?" n; then
+            if apply_boot_params; then
+                ok "Kernel params added. They take effect after a reboot."
+                BOOT_HANDLED=true
+            else
+                warn "Applying them failed — run the commands above by hand."
+            fi
+        fi
+    fi
 fi
 echo ""
 # ── Kernel version ───────────────────────────────────────────────────────────
@@ -398,10 +473,15 @@ if [[ "${NEEDS_REBOOT_NOW}" == "true" || "${NEEDS_RELOGIN}" == "true" ]]; then
         echo ""
         echo "  Also missing from your boot command line:"
         echo "      ${MISSING_PARAMS[*]}"
-        echo ""
-        echo "  Add them before you reboot:"
-        echo ""
-        print_boot_instructions
+        if [[ "$BOOT_HANDLED" == "true" ]]; then
+            echo ""
+            echo "  They are already written to your bootloader; this reboot applies them."
+        else
+            echo ""
+            echo "  Add them before you reboot:"
+            echo ""
+            print_boot_instructions
+        fi
     fi
     echo ""
     echo "  Reboot now, then run ./setup.sh again to finish setup."
@@ -897,13 +977,20 @@ echo ""
 if [[ "$NEEDS_REBOOT" == "true" ]]; then
     echo ""
     echo "============================================"
-    warn "KERNEL PARAMS NOT YET APPLIED — REBOOT REQUIRED"
-    echo "============================================"
-    echo ""
-    echo "  setup.sh does NOT modify your bootloader."
-    echo "  Run these commands manually, then reboot:"
-    echo ""
-    print_boot_instructions
+    if [[ "$BOOT_HANDLED" == "true" ]]; then
+        warn "KERNEL PARAMS ADDED — REBOOT REQUIRED"
+        echo "============================================"
+        echo ""
+        echo "  Reboot to activate them."
+    else
+        warn "KERNEL PARAMS NOT YET APPLIED — REBOOT REQUIRED"
+        echo "============================================"
+        echo ""
+        echo "  setup.sh does NOT modify your bootloader."
+        echo "  Run these commands manually, then reboot:"
+        echo ""
+        print_boot_instructions
+    fi
     echo ""
     echo "  After reboot, verify with:"
     printf '%s\n' "    cat /proc/cmdline | tr ' ' '\\n' | grep -E 'iommu|ttm|amdgpu'"
