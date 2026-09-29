@@ -10,7 +10,7 @@ No prior experience with running local AI models needed. The scripts guide you t
 
 - AMD Strix Halo with 128 GB RAM
 - 130 GiB free disk minimum
-- `podman`, Kernel 7.0 or newer (handled by script if missing)
+- `podman`, `python3`, Kernel 7.0 or newer (handled by script if missing)
 - Arch Linux specific: `sudo` installed and configured (missing in minimal install)
 
 ### Set up and run
@@ -35,17 +35,13 @@ To stop the server, press Ctrl-c from the same terminal, or run `./stop.sh`.
 
 ## What setup.sh asks you
 
-It installs anything missing first. If that added a kernel or new group
-memberships, it stops for one reboot and you run it again — nothing is
-configured until the reboot lands. Then it asks:
-
-1. Network binding: `localhost` (default) or LAN — **the engine has no
+- Network binding: `localhost` (default) or LAN — **the engine has no
    authentication**, so a LAN server is open to your whole network. API key support WIP.
-2. The port to run it on. Non-root ports only (1024-65535)
-3. Vision on/off
-4. Parallel slots (maximum allowed concurrent requests)
-5. Weights directory (default `~/models/halogen-models`, preserved across re-runs)
-6. Kernel boot params: prints exact commands if yours need changing (reboot required)
+- The port to run it on. Non-root ports only (1024-65535)
+- Vision on/off
+- Parallel slots (maximum allowed concurrent requests)
+- Weights directory (default `~/models/halogen-models`, preserved across re-runs)
+- Optimized kernel boot params: offered when missing
 
 ### Updating
 
