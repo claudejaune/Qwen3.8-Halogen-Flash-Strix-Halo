@@ -46,16 +46,14 @@ container starts serving instead of downloading.
 7. **Questions** — network binding, port, the tuned `accelerator-performance`
    profile, vision, slots, and the weights directory (preserved across re-runs).
 8. **Checkpoint state** — queries the HF repo for the checkpoint's current
-   sha256 and, when a checkpoint is already on disk, offers to verify it against
-   that hash. A file that fails is replaced rather than resumed; with the check
-   skipped, or the hash unavailable, completeness is judged by size.
+   sha256 and, when a checkpoint is already on disk, judges completeness by
+   size. `./refresh.sh --verify` hashes an existing file on request.
 9. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
    when a download is actually needed.
 10. **Write config.env** — before anything is downloaded.
 11. **Fetch phase** — offers to `podman pull` the image, then the weights.
-    Arrived files are checked by exact byte size against the repo's live listing,
-    and the checkpoint's sha256 is offered as a final check. The download
-    includes only the sidecars the configuration uses.
+    Arrived files are checked by exact byte size against the repo's live
+    listing. The download includes only the sidecars the configuration uses.
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, the only change is any bootloader edit you approved — run
@@ -161,8 +159,9 @@ The command line this repo recommends (validated on a 128 GiB machine):
 
 All of these **require a reboot** — they're read once at boot. `setup.sh` checks
 your values and offers to add what is missing: it backs up the bootloader file
-it edits and confirms the params landed, and reports a failure rather than a
-success when they did not. Verify after reboot:
+it edits, confirms the params landed, and reports a failure rather than a
+success when they did not. It never reboots; that stays with you. Verify after
+reboot:
 
 ```bash
 cat /proc/cmdline | tr ' ' '\n' | grep -E 'iommu|ttm|amdgpu'
@@ -202,9 +201,7 @@ every layer of this repo checks it:
    (`huggingface.co/api/models/…/tree/main`) lists the sha256 of every LFS
    file. `setup.sh` writes the *current* checkpoint hash into config.env as
    `CHECKPOINT_SHA256` — re-running setup always re-queries, so the pin never
-   goes stale when the creators ship a new version. A checkpoint that is on
-   disk and fails that hash is deleted and re-downloaded, because the
-   downloader skips a file whose size already matches. `refresh.sh` re-queries
+   goes stale when the creators ship a new version. `refresh.sh` re-queries
    and compares three ways:
    - **remote ≠ config's pin** → upstream shipped a new version. Hashing the
      local file (a few minutes) tells a stale pin from a stale disk: if the
@@ -231,9 +228,8 @@ to start with `HALOGEN_VISION_TOWER=1` and no sidecar file beside the
 checkpoint. setup.sh offers to fetch and verify it when you enable vision;
 refresh.sh repairs or updates it if it goes missing or stale.
 
-All network steps are best-effort: offline never blocks setup or refresh,
-and a sha256 of the big checkpoint is only ever computed after an explicit
-yes.
+All network steps are best-effort: offline never blocks setup or refresh, and
+the checkpoint is hashed only when you ask for it (`./refresh.sh --verify`).
 
 ## Container updates
 
