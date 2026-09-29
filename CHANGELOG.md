@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - `setup.sh` treats a computed checkpoint hash mismatch as conclusive: the size check cannot clear it, and the download replaces the file instead of resuming over it
 - a `sha256sum` failure falls back to the size check instead of being reported as a mismatch
 - the checkpoint check no longer claims the weights download happens on first `./run.sh`
+- the weights report gives sizes in GiB instead of raw bytes
 
 ## 1.1.0-rc.2 - 2026-09-29
 

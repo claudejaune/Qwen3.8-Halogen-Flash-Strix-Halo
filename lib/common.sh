@@ -281,6 +281,11 @@ hf_remote_sha256() {
     printf '%s\n' "$oid"
 }
 
+# Bytes as GiB with one decimal, for the size reports. 1073741824 -> 1.0
+bytes_gib() {
+    awk -v b="${1:-0}" 'BEGIN { printf "%.1f", b / 1073741824 }'
+}
+
 # _weights_check_pass <models-dir> <vision> <table>
 # The core pass. With a non-empty <table> (from hf_remote_table) sizes are
 # compared exactly; with an empty one the historical local floors are used.
@@ -289,6 +294,7 @@ hf_remote_sha256() {
 #   unverified present, size plausible, no listing available
 #   missing    not on disk
 #   incomplete present but the wrong size (truncated / partial)
+# Sizes in <detail> are GiB, for display.
 _weights_check_pass() {
     local dir="$1" vision="$2" table="$3" rc=0
     local -a files=("$HF_CHECKPOINT_FILE" "$HF_OVERLAY_FILE")
@@ -313,20 +319,20 @@ _weights_check_pass() {
         expected="$(awk -v f="$f" '$1 == f {print $3; exit}' <<<"$table")"
         if [[ -n "$expected" ]]; then
             if [[ "$actual" == "$expected" ]]; then
-                printf 'ok %s %s\n' "$f" "$actual"
+                printf 'ok %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
             else
-                printf 'incomplete %s %s/%s\n' "$f" "$actual" "$expected"
+                printf 'incomplete %s %s GiB of %s GiB\n' "$f" "$(bytes_gib "$actual")" "$(bytes_gib "$expected")"
                 rc=1
             fi
         elif [[ "$f" == "$HF_CHECKPOINT_FILE" && "$actual" -lt $((110 * 1073741824)) ]]; then
             # No listing: the historical size floor. ~115 GiB expected.
-            printf 'incomplete %s %s\n' "$f" "$actual"
+            printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
             rc=1
         elif (( actual == 0 )); then
-            printf 'incomplete %s %s\n' "$f" "$actual"
+            printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
             rc=1
         else
-            printf 'unverified %s %s\n' "$f" "$actual"
+            printf 'unverified %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
         fi
     done
 
