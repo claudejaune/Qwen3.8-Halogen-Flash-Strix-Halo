@@ -25,8 +25,10 @@ container starts serving instead of downloading.
 
 1. **sudo** — required to install anything. The script never configures it; a
    missing `sudo` stops setup with the commands to set it up.
-2. **Tools** — checks `git`, `curl`, `podman`, and `tuned` on every distro and
-   installs any that are missing in one package-manager call.
+2. **Tools** — checks `git`, `curl`, `python3`, `podman`, and `tuned` on every
+   distro and installs any that are missing in one package-manager call.
+   `python3` reads the weights repo's file listing; on Arch, setup installs the
+   `python` package, which provides it.
 3. **GPU access** — confirms your user can open `/dev/kfd` and a
    `/dev/dri/render*` node. If not, it runs AMD's fix
    (`sudo usermod -aG render,video $USER`).
@@ -63,7 +65,8 @@ interrupted weights download resumes when you re-run `./setup.sh` or
 **data, not code** — they are never evaluated, so a config file can't inject
 commands. The loader (`lib/common.sh`) only accepts the keys listed in
 `CONFIG_ALLOWED_KEYS` and refuses anything else. Full-line `#` comments and
-blank lines are allowed.
+blank lines are allowed. `setup.sh` creates the file owner-only (mode 0600)
+because it can hold `HF_TOKEN`.
 
 **Precedence: environment beats the config file.** Any key that is set in
 the shell's environment when a script runs keeps its value instead of what
@@ -137,8 +140,8 @@ podman run --rm --name halogen-flash \
 
 Before any of that, `run.sh` checks the weights and offers to download or
 repair anything missing or the wrong size, using the same `hf download` setup
-uses. The check compares each file's byte size against the repo's live
-listing, so a truncated checkpoint is caught before the engine loads it.
+uses. A local size pass runs first; anything it flags is checked against the
+repo's live byte sizes.
 
 ## Kernel params
 
@@ -205,11 +208,12 @@ every layer of this repo checks it:
    - **remote ≠ local file** → the file is damaged; delete and re-download.
    - **everything matches** → optionally verify the local file against the
      live hash.
-2. **Exact-size check** (setup, `run.sh` and `refresh.sh`): the tree API lists
-   each file's byte size, so a truncated or partial file is caught without any
-   hashing. `setup.sh` and `run.sh` offer to re-download what fails it;
-   `refresh.sh` reports it. With the repo unreachable, the checkpoint is
-   judged against its ~110 GiB floor.
+2. **Size check** (setup and `run.sh`): the tree API lists each file's byte
+   size, so a truncated or partial file is caught without any hashing.
+   `setup.sh` compares against the live listing on every run; `run.sh`
+   consults it when its local size pass flags a problem. Both offer to
+   re-download what fails. With the repo unreachable, the checkpoint is judged
+   against its ~110 GiB floor.
 3. **Offline fallback**: with the repo unreachable, refresh.sh falls back to
    config's pinned hash, or a hash it recorded once into
    `<MODELS_DIR>/checkpoint.sha256`, or the size check alone.

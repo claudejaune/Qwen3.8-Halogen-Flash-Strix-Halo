@@ -237,17 +237,18 @@ file_sha256() {
 
 # hf_remote_table — one API call, one line per LFS file in the weights repo:
 #   <path> <sha256> <size-bytes>
-# Returns 1 when curl/python3 are missing or the repo is unreachable. Never
-# cached: every call is the repo's current state.
+# Returns 1 when the repo is unreachable, and 2 when curl or python3 is
+# missing — so a caller can tell "no network" from "no tooling".
+# Never cached: every call is the repo's current state.
 hf_remote_table() {
     local json
     if ! have curl; then
         echo "hf_remote_table: curl not found" >&2
-        return 1
+        return 2
     fi
     if ! have python3; then
         echo "hf_remote_table: python3 not found" >&2
-        return 1
+        return 2
     fi
     if ! json="$(curl -fsSL --connect-timeout 5 --max-time 20 "$HF_TREE_API" 2>/dev/null)"; then
         echo "hf_remote_table: could not reach the HF API (offline?)" >&2
@@ -263,11 +264,15 @@ for entry in json.load(sys.stdin):
 
 # hf_remote_sha256 <filename>
 # Prints the sha256 the HF repo currently lists for the file (the LFS "oid"
-# in the tree API). Returns 1 when offline, when curl/python3 are missing,
-# or when the file is not in the repo.
+# in the tree API). Returns 1 when offline or when the file is not in the
+# repo, 2 when curl or python3 is missing.
 hf_remote_sha256() {
-    local file="$1" table oid
-    table="$(hf_remote_table 2>/dev/null)" || table=""
+    local file="$1" table oid rc=0
+    table="$(hf_remote_table 2>/dev/null)" || rc=$?
+    if (( rc == 2 )); then
+        echo "hf_remote_sha256: reading the repo's file list needs python3" >&2
+        return 2
+    fi
     oid="$(awk -v f="$file" '$1 == f {print $2; exit}' <<<"$table")"
     if [[ ! "$oid" =~ ^[0-9a-f]{64}$ ]]; then
         echo "hf_remote_sha256: $file not found in $HF_REPO_ID (or offline)" >&2
@@ -462,8 +467,8 @@ hf_download_models() {
 # host with neither `hf` nor a usable image can still get the weights.
 _hf_curl_fetch_tree() {
     local dir="$1" vision="${2:-0}" rc=0 f expected actual
-    local table
-    table="$(hf_remote_table 2>/dev/null)" || table=""
+    local table table_rc=0
+    table="$(hf_remote_table 2>/dev/null)" || table_rc=$?
 
     local -a excluded=()
     local x
@@ -481,7 +486,11 @@ _hf_curl_fetch_tree() {
             fi
         done <<<"$table"
     else
-        warn "HF API unreachable — fetching only the files this repo knows by name."
+        if (( table_rc == 2 )); then
+            warn "python3 is missing — fetching only the files this repo knows by name."
+        else
+            warn "HF API unreachable — fetching only the files this repo knows by name."
+        fi
         names=("$HF_CHECKPOINT_FILE" "$HF_OVERLAY_FILE" "$HF_VISION_FILE")
     fi
 

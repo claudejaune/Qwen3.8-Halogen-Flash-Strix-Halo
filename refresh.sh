@@ -208,9 +208,8 @@ offer_update_flow() {
 
 info "Checking the HF repo for the checkpoint's current sha256..."
 REMOTE_CK=""
-if ! REMOTE_CK="$(hf_remote_sha256 "$CHECKPOINT")"; then
-    REMOTE_CK=""
-fi
+CK_PROBE_RC=0
+REMOTE_CK="$(hf_remote_sha256 "$CHECKPOINT")" || CK_PROBE_RC=$?
 
 if [[ -n "$REMOTE_CK" ]]; then
     ok "Repo reachable (checkpoint sha256 ${REMOTE_CK:0:12}...)."
@@ -258,8 +257,12 @@ if [[ -n "$REMOTE_CK" ]]; then
         echo "  First ./run.sh downloads it (~122 GiB, resumes if interrupted)."
     fi
 else
-    # Offline (or no python3/curl): fall back to what we know locally.
-    warn "HF repo unreachable — using the pinned/recorded hash only."
+    # Fall back to what we know locally.
+    if (( CK_PROBE_RC == 2 )); then
+        warn "Reading the repo's file list needs python3 — using the pinned/recorded hash only."
+    else
+        warn "HF repo unreachable — using the pinned/recorded hash only."
+    fi
     if file_usable "$CK_PATH"; then
         ok "Checkpoint present: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
         CK_GIB=$(( $(stat -c '%s' "$CK_PATH") / 1073741824 ))
@@ -294,8 +297,12 @@ echo ""
 if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     info "=== Vision sidecar ==="
     REMOTE_VISION=""
-    if ! REMOTE_VISION="$(hf_remote_sha256 "$VISION_FILE")"; then
-        REMOTE_VISION=""
+    VISION_PROBE_RC=0
+    REMOTE_VISION="$(hf_remote_sha256 "$VISION_FILE")" || VISION_PROBE_RC=$?
+    if (( VISION_PROBE_RC == 2 )); then
+        VISION_PROBE_WHY="python3 is not installed"
+    else
+        VISION_PROBE_WHY="the repo is unreachable"
     fi
     if [[ ! -f "$VISION_PATH" ]]; then
         if [[ -n "$REMOTE_VISION" ]]; then
@@ -305,7 +312,7 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
                 warn "Skipped. The server will refuse to start with images enabled until it exists."
             fi
         else
-            warn "Vision sidecar missing and the repo unreachable. The server will"
+            warn "Vision sidecar missing and $VISION_PROBE_WHY. The server will"
             warn "refuse to start with images enabled. Fetch it later:"
             echo "  hf download $HF_REPO_ID $VISION_FILE --local-dir $MODELS_DIR"
         fi
@@ -316,14 +323,14 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
             if ask_yes_no "  Re-download it (0.84 GiB)?" y; then
                 hf_fetch_file "$VISION_FILE" "$REMOTE_VISION" "$MODELS_DIR" || true
             fi
-        elif [[ -n "${VISION_SHA256:-}" && "$VISION_SHA256" != "$REMOTE_VISION" ]]; then
+        elif [[ "${VISION_SHA256:-}" != "$REMOTE_VISION" ]]; then
             rewrite_config_key VISION_SHA256 "$REMOTE_VISION" >/dev/null
             ok "Vision sidecar current; config.env's VISION_SHA256 refreshed."
         else
             ok "Vision sidecar present and current."
         fi
     else
-        ok "Vision sidecar present (repo unreachable, hash unchecked)."
+        ok "Vision sidecar present ($VISION_PROBE_WHY, hash unchecked)."
     fi
     echo ""
 fi
