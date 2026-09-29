@@ -230,9 +230,10 @@ normalize_image() {
 
 # ── Hugging Face helpers ─────────────────────────────────────────────────────
 
-# sha256 of a file; prints nothing when the file cannot be hashed.
+# sha256 of a file; prints nothing when the file cannot be hashed. The `|| true`
+# keeps a failed sha256sum from aborting a caller under `set -o pipefail`.
 file_sha256() {
-    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || true
 }
 
 # hf_remote_table — one API call, one line per LFS file in the weights repo:

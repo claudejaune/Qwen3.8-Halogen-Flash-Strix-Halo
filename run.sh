@@ -118,17 +118,6 @@ if (( WEIGHTS_RC != 0 )); then
             WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" 2>/dev/null)" || WEIGHTS_RC=$?
             if (( WEIGHTS_RC == 0 )); then
                 ok "Weights ready."
-                if [[ -n "${CHECKPOINT_SHA256:-}" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
-                    info "Computing sha256 (a few minutes on NVMe)..."
-                    LOCAL_SHA="$(file_sha256 "$MODELS_DIR/$HF_CHECKPOINT_FILE")"
-                    if [[ "$LOCAL_SHA" == "$CHECKPOINT_SHA256" ]]; then
-                        ok "Checkpoint integrity verified."
-                    else
-                        warn "CHECKSUM MISMATCH: expected $CHECKPOINT_SHA256"
-                        warn "                  got ${LOCAL_SHA:-<hash failed>}"
-                        warn "Delete $MODELS_DIR/$HF_CHECKPOINT_FILE and re-run ./run.sh."
-                    fi
-                fi
             else
                 warn "The download finished but the check still reports a problem."
                 warn "The engine may fail; re-run ./run.sh to resume, or ./refresh.sh."

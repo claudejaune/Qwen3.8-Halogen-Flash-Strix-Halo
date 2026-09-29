@@ -265,9 +265,9 @@ for p in "${EXPECTED_PARAMS[@]}"; do
     fi
 done
 
-# The commands that add the missing params, plus the caution that goes with
-# touching the bootloader. Built here so the exact commands sit beside the check
-# that found the problem, in the reboot gate, and in the final summary.
+# The command block that adds the params, without the reboot: setup runs this
+# block when it applies them, and the manual path prints it followed by the
+# reboot. Built here so it sits beside the check that found the problem.
 NEEDS_REBOOT=false
 BOOT_HANDLED=false
 BOOT_FAMILY="unknown"
@@ -280,16 +280,14 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     if have grubby; then
         BOOT_FAMILY="grubby"
         BOOT_INSTRUCTIONS="  # Fedora/RHEL-family: grubby updates all entries (BLS + /etc/kernel/cmdline + grub.cfg)
-  sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'
-  sudo reboot"
+  sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'"
     elif [[ -d /boot/loader/entries || -f /etc/kernel/cmdline ]]; then
         BOOT_FAMILY="systemd-boot"
         BOOT_INSTRUCTIONS="  # systemd-boot: add to /etc/kernel/cmdline:
   #   $KERNEL_ARGS
   #
-  # Then rebuild and reboot:
-  sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\"
-  sudo reboot"
+  # Then rebuild:
+  sudo kernel-install add \"\$(uname -r)\" \"/boot/vmlinuz-\$(uname -r)\" \"/boot/initramfs-\$(uname -r).img\""
     elif [[ -f /etc/default/grub ]]; then
         BOOT_FAMILY="grub"
         # The rebuild command and the grub.cfg path differ by family.
@@ -321,13 +319,11 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
                 ;;
         esac
         BOOT_INSTRUCTIONS="  # GRUB (/etc/default/grub): one command appends the missing params and
-  # rebuilds grub.cfg (it appends — run it once):
-  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD
-  sudo reboot"
+  # rebuilds grub.cfg:
+  sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD"
     else
         BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
-  #   $KERNEL_ARGS
-  sudo reboot"
+  #   $KERNEL_ARGS"
     fi
 fi
 
@@ -388,31 +384,55 @@ apply_boot_params() {
     return $rc
 }
 
-# The caution belongs with the commands, wherever they are shown.
-print_boot_instructions() {
-    warn "These commands change your bootloader configuration. The bootloader"
-    warn "starts your machine, so a mistake there can prevent it from booting."
-    warn "Consult your distro's documentation if you are unsure."
+# The caution belongs with the commands wherever they are shown.
+print_boot_caution() {
+    warn "Adding these params changes your bootloader configuration. The"
+    warn "bootloader starts your machine, so a mistake there can prevent it from"
+    warn "booting. Consult your distro's documentation if you are unsure."
+    echo ""
+}
+
+# What setup offers to run.
+print_boot_offer() {
+    print_boot_caution
+    echo "  setup.sh will run:"
     echo ""
     echo "$BOOT_INSTRUCTIONS"
+    echo ""
+    echo "  They apply at the next reboot. setup.sh does not reboot for you."
+    echo ""
+}
+
+# What a user runs by hand.
+print_boot_manual() {
+    print_boot_caution
+    echo "  Add them yourself, then reboot:"
+    echo ""
+    echo "$BOOT_INSTRUCTIONS"
+    echo "  sudo reboot"
 }
 
 info "Kernel params: $(( ${#EXPECTED_PARAMS[@]} - ${#MISSING_PARAMS[@]} ))/${#EXPECTED_PARAMS[@]} of the recommended set are active"
 if ((${#MISSING_PARAMS[@]} > 0)); then
     warn "Missing from your boot command line: ${MISSING_PARAMS[*]}"
     echo ""
-    print_boot_instructions
-    if [[ "$BOOT_FAMILY" != "unknown" ]]; then
-        if boot_params_in_config; then
-            info "They are already written to your bootloader — they apply at the next boot."
-            BOOT_HANDLED=true
-        elif ask_yes_no "  Apply them now?" y; then
+    if boot_params_in_config; then
+        info "They are already written to your bootloader — they apply at the next boot."
+        BOOT_HANDLED=true
+    elif [[ "$BOOT_FAMILY" == "unknown" ]]; then
+        print_boot_manual
+    else
+        print_boot_offer
+        if ask_yes_no "  Apply them now?" y; then
             if apply_boot_params; then
                 ok "Kernel params added. They take effect after a reboot."
                 BOOT_HANDLED=true
             else
-                warn "Applying them failed — run the commands above by hand."
+                warn "Applying them failed — run the command above by hand, then reboot."
             fi
+        else
+            echo "  Skipped. Run the command above by hand, then reboot:"
+            echo "  sudo reboot"
         fi
     fi
 fi
@@ -474,16 +494,14 @@ if [[ "${NEEDS_REBOOT_NOW}" == "true" || "${NEEDS_RELOGIN}" == "true" ]]; then
     fi
     if ((${#MISSING_PARAMS[@]} > 0)); then
         echo ""
-        echo "  Also missing from your boot command line:"
-        echo "      ${MISSING_PARAMS[*]}"
         if [[ "$BOOT_HANDLED" == "true" ]]; then
-            echo ""
-            echo "  They are already written to your bootloader; this reboot applies them."
+            echo "  The kernel params are written to your bootloader; this reboot"
+            echo "  applies them."
         else
+            echo "  Also missing from your boot command line:"
+            echo "      ${MISSING_PARAMS[*]}"
             echo ""
-            echo "  Add them before you reboot:"
-            echo ""
-            print_boot_instructions
+            print_boot_manual
         fi
     fi
     echo ""
@@ -693,45 +711,24 @@ fi
 echo ""
 
 # ── Existing checkpoint check ────────────────────────────────────────────────
-# A verified-complete checkpoint means ./run.sh downloads nothing, so the
-# ~130 GiB free-disk requirement does not apply.
+# A complete checkpoint means ./run.sh downloads nothing, so the ~130 GiB
+# free-disk requirement does not apply. Completeness is judged by size: the
+# downloader verifies what it fetches, and ./refresh.sh --verify hashes an
+# existing file on request.
 CK_PATH="$MODELS_DIR/$CHECKPOINT_FILE"
 CK_NEEDS_DOWNLOAD=true
-CK_HASH_MISMATCH=false
 size_gib() {
     stat -c '%s' "$1" 2>/dev/null | awk '{printf "%.0f", $1 / 1073741824}'
 }
 
 if [[ -f "$CK_PATH" ]]; then
     echo "  A checkpoint already exists: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
-    if [[ -n "$REMOTE_CK_SHA" ]]; then
-        if ask_yes_no "  Verify it against the repo's sha256 (a few minutes)?" y; then
-            info "Computing sha256 (a few minutes on NVMe)..."
-            LOCAL_SHA="$(sha256sum "$CK_PATH" 2>/dev/null | cut -d' ' -f1)" || LOCAL_SHA=""
-            if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
-                ok "The checkpoint on disk IS the current repo version."
-                CK_NEEDS_DOWNLOAD=false
-            elif [[ -n "$LOCAL_SHA" ]]; then
-                # A hash that was computed and differs is conclusive: the size
-                # pass below must not clear it.
-                CK_HASH_MISMATCH=true
-                warn "The file on disk does not match the repo (expected $REMOTE_CK_SHA,"
-                warn "got $LOCAL_SHA)."
-            else
-                warn "Could not hash the file — judging completeness by size alone."
-            fi
-        else
-            warn "Verification skipped — judging completeness by size alone."
-        fi
-    fi
-    if [[ "$CK_NEEDS_DOWNLOAD" == "true" && "$CK_HASH_MISMATCH" != "true" ]]; then
-        CK_GIB="$(size_gib "$CK_PATH")"
-        if (( CK_GIB >= 110 )); then
-            info "The file is ~${CK_GIB} GiB — treated as complete (unverified)."
-            CK_NEEDS_DOWNLOAD=false
-        else
-            warn "The file is only ~${CK_GIB} GiB (expect ~115) — incomplete."
-        fi
+    CK_GIB="$(size_gib "$CK_PATH")"
+    if (( CK_GIB >= 110 )); then
+        info "The file is ~${CK_GIB} GiB — treated as present (size only)."
+        CK_NEEDS_DOWNLOAD=false
+    else
+        warn "The file is only ~${CK_GIB} GiB (expect ~115) — incomplete."
     fi
 else
     info "No checkpoint on disk yet."
@@ -839,7 +836,7 @@ WEIGHTS_READY=false
 info "=== Fetch phase: weights ==="
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
-if (( WEIGHTS_RC == 0 )) && [[ "$CK_HASH_MISMATCH" != "true" ]]; then
+if (( WEIGHTS_RC == 0 )); then
     WEIGHTS_READY=true
     ok "Weights present and the expected size in $MODELS_DIR."
 else
@@ -850,9 +847,6 @@ else
             incomplete) echo "    incomplete: $file ($detail)" ;;
         esac
     done <<<"$WEIGHTS_STATUS"
-    if [[ "$CK_HASH_MISMATCH" == "true" ]]; then
-        echo "    wrong hash: $CHECKPOINT_FILE (does not match the repo's sha256)"
-    fi
     echo ""
     if [[ "$VISION_FLAG" != "1" ]]; then
         echo "  Vision is off, so its sidecar (0.84 GiB) and the unused speed"
@@ -867,13 +861,6 @@ else
             warn "Only ${avail} GiB free on the disk that holds $MODELS_DIR."
             warn "Skipping the download. Free space and re-run ./setup.sh."
         else
-            # A checkpoint whose hash differs is replaced, not resumed: the
-            # downloader skips a file whose size already matches, so removing
-            # it is what makes the transfer repair it.
-            if [[ "$CK_HASH_MISMATCH" == "true" && -f "$CK_PATH" ]]; then
-                info "Removing the checkpoint that does not match the repo..."
-                rm -f "$CK_PATH"
-            fi
             if hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG"; then
                 ok "Download finished."
                 WEIGHTS_RC=0
@@ -881,17 +868,6 @@ else
                 if (( WEIGHTS_RC == 0 )); then
                     WEIGHTS_READY=true
                     ok "Weights verified: every file is present at the expected size."
-                    if [[ -n "$REMOTE_CK_SHA" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
-                        info "Computing sha256 (a few minutes on NVMe)..."
-                        LOCAL_SHA="$(file_sha256 "$CK_PATH")"
-                        if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
-                            ok "Checkpoint integrity verified."
-                        else
-                            warn "CHECKSUM MISMATCH: expected $REMOTE_CK_SHA"
-                            warn "                  got ${LOCAL_SHA:-<hash failed>}"
-                            warn "Delete $CK_PATH and re-run ./setup.sh to re-download."
-                        fi
-                    fi
                 else
                     warn "Some files are still missing or the wrong size:"
                     while read -r st file detail; do
@@ -989,10 +965,7 @@ if [[ "$NEEDS_REBOOT" == "true" ]]; then
         warn "KERNEL PARAMS NOT YET APPLIED — REBOOT REQUIRED"
         echo "============================================"
         echo ""
-        echo "  setup.sh does NOT modify your bootloader."
-        echo "  Run these commands manually, then reboot:"
-        echo ""
-        print_boot_instructions
+        print_boot_manual
     fi
     echo ""
     echo "  After reboot, verify with:"
