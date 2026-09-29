@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.1.0-rc.2 - 2026-09-29
+
+- `setup.sh` adds `python3` to the tools it checks and installs on every distro; it reads the weights repo's sha256 and size list (Arch's package is `python`)
+- `config.env` is written owner-only (0600) because it can hold `HF_TOKEN`
+
 ## 1.1.0-rc.1 - 2026-09-28
 
 Major additions. The scripts are now tuned so that a user with a fresh Ubuntu 24.04, Fedora 44, or Arch install can run `setup.sh` and get *everything* they need to run Qwen 3.8 Flash through Halogen Server

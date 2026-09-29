@@ -42,10 +42,10 @@ configured until the reboot lands. Then it asks:
 1. Network binding: `localhost` (default) or LAN — **the engine has no
    authentication**, so a LAN server is open to your whole network. API key support WIP.
 2. The port to run it on. Non-root ports only (1024-65535)
-3. Kernel boot params: prints exact commands if yours need changing (reboot required)
-4. Vision on/off
-5. Parallel slots (maximum allowed concurrent requests)
-6. Weights directory (default `~/models/halogen-models`, preserved across re-runs)
+3. Vision on/off
+4. Parallel slots (maximum allowed concurrent requests)
+5. Weights directory (default `~/models/halogen-models`, preserved across re-runs)
+6. Kernel boot params: prints exact commands if yours need changing (reboot required)
 
 ### Updating
 
