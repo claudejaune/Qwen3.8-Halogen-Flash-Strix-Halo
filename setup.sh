@@ -325,9 +325,9 @@ fi
 
 # The caution belongs with the commands, wherever they are shown.
 print_boot_instructions() {
-    warn "These commands modify your bootloader options, which is a persistent"
-    warn "change that applies at every boot. Consult your distro's documentation"
-    warn "if you are unsure."
+    warn "These commands change your bootloader configuration. The bootloader"
+    warn "starts your machine, so a mistake there can prevent it from booting."
+    warn "Consult your distro's documentation if you are unsure."
     echo ""
     echo "$BOOT_INSTRUCTIONS"
 }
@@ -614,6 +614,7 @@ echo ""
 # ~130 GiB free-disk requirement does not apply.
 CK_PATH="$MODELS_DIR/$CHECKPOINT_FILE"
 CK_NEEDS_DOWNLOAD=true
+CK_HASH_MISMATCH=false
 size_gib() {
     stat -c '%s' "$1" 2>/dev/null | awk '{printf "%.0f", $1 / 1073741824}'
 }
@@ -627,15 +628,20 @@ if [[ -f "$CK_PATH" ]]; then
             if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
                 ok "The checkpoint on disk IS the current repo version."
                 CK_NEEDS_DOWNLOAD=false
-            else
+            elif [[ -n "$LOCAL_SHA" ]]; then
+                # A hash that was computed and differs is conclusive: the size
+                # pass below must not clear it.
+                CK_HASH_MISMATCH=true
                 warn "The file on disk does not match the repo (expected $REMOTE_CK_SHA,"
-                warn "got ${LOCAL_SHA:-<hash failed>})."
+                warn "got $LOCAL_SHA)."
+            else
+                warn "Could not hash the file — judging completeness by size alone."
             fi
         else
             warn "Verification skipped — judging completeness by size alone."
         fi
     fi
-    if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
+    if [[ "$CK_NEEDS_DOWNLOAD" == "true" && "$CK_HASH_MISMATCH" != "true" ]]; then
         CK_GIB="$(size_gib "$CK_PATH")"
         if (( CK_GIB >= 110 )); then
             info "The file is ~${CK_GIB} GiB — treated as complete (unverified)."
@@ -750,7 +756,7 @@ WEIGHTS_READY=false
 info "=== Fetch phase: weights ==="
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
-if (( WEIGHTS_RC == 0 )); then
+if (( WEIGHTS_RC == 0 )) && [[ "$CK_HASH_MISMATCH" != "true" ]]; then
     WEIGHTS_READY=true
     ok "Weights present and the expected size in $MODELS_DIR."
 else
@@ -761,6 +767,9 @@ else
             incomplete) echo "    incomplete: $file ($detail)" ;;
         esac
     done <<<"$WEIGHTS_STATUS"
+    if [[ "$CK_HASH_MISMATCH" == "true" ]]; then
+        echo "    wrong hash: $CHECKPOINT_FILE (does not match the repo's sha256)"
+    fi
     echo ""
     if [[ "$VISION_FLAG" != "1" ]]; then
         echo "  Vision is off, so its sidecar (0.84 GiB) and the unused speed"
@@ -774,37 +783,46 @@ else
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
             warn "Only ${avail} GiB free on the disk that holds $MODELS_DIR."
             warn "Skipping the download. Free space and re-run ./setup.sh."
-        elif hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG"; then
-            ok "Download finished."
-            WEIGHTS_RC=0
-            WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
-            if (( WEIGHTS_RC == 0 )); then
-                WEIGHTS_READY=true
-                ok "Weights verified: every file is present at the expected size."
-                if [[ -n "$REMOTE_CK_SHA" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
-                    info "Computing sha256 (a few minutes on NVMe)..."
-                    LOCAL_SHA="$(file_sha256 "$CK_PATH")"
-                    if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
-                        ok "Checkpoint integrity verified."
-                    else
-                        warn "CHECKSUM MISMATCH: expected $REMOTE_CK_SHA"
-                        warn "                  got ${LOCAL_SHA:-<hash failed>}"
-                        warn "Delete $CK_PATH and re-run ./setup.sh to re-download."
+        else
+            # A checkpoint whose hash differs is replaced, not resumed: the
+            # downloader skips a file whose size already matches, so removing
+            # it is what makes the transfer repair it.
+            if [[ "$CK_HASH_MISMATCH" == "true" && -f "$CK_PATH" ]]; then
+                info "Removing the checkpoint that does not match the repo..."
+                rm -f "$CK_PATH"
+            fi
+            if hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG"; then
+                ok "Download finished."
+                WEIGHTS_RC=0
+                WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
+                if (( WEIGHTS_RC == 0 )); then
+                    WEIGHTS_READY=true
+                    ok "Weights verified: every file is present at the expected size."
+                    if [[ -n "$REMOTE_CK_SHA" ]] && ask_yes_no "  Compute the checkpoint's sha256 to verify it fully (a few minutes)?" n; then
+                        info "Computing sha256 (a few minutes on NVMe)..."
+                        LOCAL_SHA="$(file_sha256 "$CK_PATH")"
+                        if [[ "$LOCAL_SHA" == "$REMOTE_CK_SHA" ]]; then
+                            ok "Checkpoint integrity verified."
+                        else
+                            warn "CHECKSUM MISMATCH: expected $REMOTE_CK_SHA"
+                            warn "                  got ${LOCAL_SHA:-<hash failed>}"
+                            warn "Delete $CK_PATH and re-run ./setup.sh to re-download."
+                        fi
                     fi
+                else
+                    warn "Some files are still missing or the wrong size:"
+                    while read -r st file detail; do
+                        case "$st" in
+                            missing)    echo "    missing:    $file" ;;
+                            incomplete) echo "    incomplete: $file ($detail)" ;;
+                        esac
+                    done <<<"$WEIGHTS_STATUS"
+                    warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
                 fi
             else
-                warn "Some files are still missing or the wrong size:"
-                while read -r st file detail; do
-                    case "$st" in
-                        missing)    echo "    missing:    $file" ;;
-                        incomplete) echo "    incomplete: $file ($detail)" ;;
-                    esac
-                done <<<"$WEIGHTS_STATUS"
+                warn "The weights download did not finish."
                 warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
             fi
-        else
-            warn "The weights download did not finish."
-            warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
         fi
     else
         warn "Skipped. ./run.sh downloads the weights on first start."
