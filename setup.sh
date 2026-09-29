@@ -403,7 +403,7 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
         if boot_params_in_config; then
             info "They are already written to your bootloader — they apply at the next boot."
             BOOT_HANDLED=true
-        elif ask_yes_no "  Apply them now?" n; then
+        elif ask_yes_no "  Apply them now?" y; then
             if apply_boot_params; then
                 ok "Kernel params added. They take effect after a reboot."
                 BOOT_HANDLED=true

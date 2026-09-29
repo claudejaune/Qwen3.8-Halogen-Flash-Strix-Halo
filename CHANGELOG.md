@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.1.0-rc.3 - 2026-09-29
+
+- `setup.sh` shows the kernel-param commands beside the check that finds them, in the reboot gate, and in the closing summary, so one reboot covers the kernel, the groups, and the params
+- `setup.sh` offers to add the missing params itself (grubby, systemd-boot, or GRUB), backing up the bootloader file and confirming the params landed before reporting success
+- `setup.sh` treats a computed checkpoint hash mismatch as conclusive: the size check cannot clear it, and the download replaces the file instead of resuming over it
+- a `sha256sum` failure falls back to the size check instead of being reported as a mismatch
+- the checkpoint check no longer claims the weights download happens on first `./run.sh`
+
 ## 1.1.0-rc.2 - 2026-09-29
 
 - `setup.sh` adds `python3` to the tools it checks and installs on every distro; it reads the weights repo's sha256 and size list (Arch's package is `python`)
