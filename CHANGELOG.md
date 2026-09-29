@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.1.0-rc.4 - 2026-09-29
+
+- `setup.sh` and `run.sh` no longer hash the checkpoint: a download is covered by the exact-size check and the downloader's own verification, and `./refresh.sh --verify` hashes an existing file on request
+- `file_sha256` returns an empty string when a file cannot be hashed instead of aborting its caller under `set -o pipefail`, which made setup exit silently mid-run
+- the kernel-param prompt shows only the bootloader command, says setup does not reboot for you, and drops "run it once"; the manual path adds the reboot
+
 ## 1.1.0-rc.3 - 2026-09-29
 
 - `setup.sh` shows the kernel-param commands beside the check that finds them, in the reboot gate, and in the closing summary, so one reboot covers the kernel, the groups, and the params
