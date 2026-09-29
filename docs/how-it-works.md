@@ -35,16 +35,20 @@ container starts serving instead of downloading.
 4. **Kernel** — the engine needs **kernel 7.0+** (the read-only registration of
    the checkpoint is refused on 6.x). On Ubuntu setup offers to install the HWE
    kernel.
-5. **Reboot gate** — when step 3 or 4 changed something, setup stops here so one
-   reboot covers a new kernel and new group memberships together. Nothing is
-   configured until that reboot lands.
-6. **Kernel params** — checks the boot command line against the set halogen was
-   measured on and prints the grubby/grub/systemd-boot commands to run.
+5. **Kernel params** — checks the boot command line against the set halogen was
+   measured on and offers to add what is missing, using `grubby`, systemd-boot,
+   or GRUB. Setup backs up the file it edits and confirms the params landed;
+   they take effect at the next boot.
+6. **Reboot gate** — when step 3 or 4 changed something, setup stops here so one
+   reboot covers the new group memberships, the new kernel, and any new params
+   together. With only new params, setup carries on and asks for the reboot at
+   the end.
 7. **Questions** — network binding, port, the tuned `accelerator-performance`
    profile, vision, slots, and the weights directory (preserved across re-runs).
 8. **Checkpoint state** — queries the HF repo for the checkpoint's current
-   sha256 and, when a checkpoint is already on disk, verifies it against that
-   hash (or judges completeness by size).
+   sha256 and, when a checkpoint is already on disk, offers to verify it against
+   that hash. A file that fails is replaced rather than resumed; with the check
+   skipped, or the hash unavailable, completeness is judged by size.
 9. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
    when a download is actually needed.
 10. **Write config.env** — before anything is downloaded.
@@ -54,10 +58,10 @@ container starts serving instead of downloading.
     includes only the sidecars the configuration uses.
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
-config is written, nothing has changed — run `./setup.sh` again to complete
-setup. After it is written, the message says the config was saved. An
-interrupted weights download resumes when you re-run `./setup.sh` or
-`./run.sh`.
+config is written, the only change is any bootloader edit you approved — run
+`./setup.sh` again to complete setup. After it is written, the message says the
+config was saved. An interrupted weights download resumes when you re-run
+`./setup.sh` or `./run.sh`.
 
 ## config.env reference
 
@@ -155,9 +159,10 @@ The command line this repo recommends (validated on a 128 GiB machine):
 | `ttm.pages_limit=31457280` | Max 4 KiB pages the GPU can pin — the 120 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GiB machine.** |
 | `amdgpu.gttsize=122880` | GTT size in MiB (120 GiB), set to match the pages_limit ceiling. |
 
-All of these **require a reboot** — they're read once at boot. `setup.sh`
-checks your values and prints the commands to run; it does not modify your
-bootloader. Verify after reboot:
+All of these **require a reboot** — they're read once at boot. `setup.sh` checks
+your values and offers to add what is missing: it backs up the bootloader file
+it edits and confirms the params landed, and reports a failure rather than a
+success when they did not. Verify after reboot:
 
 ```bash
 cat /proc/cmdline | tr ' ' '\n' | grep -E 'iommu|ttm|amdgpu'
@@ -197,7 +202,9 @@ every layer of this repo checks it:
    (`huggingface.co/api/models/…/tree/main`) lists the sha256 of every LFS
    file. `setup.sh` writes the *current* checkpoint hash into config.env as
    `CHECKPOINT_SHA256` — re-running setup always re-queries, so the pin never
-   goes stale when the creators ship a new version. `refresh.sh` re-queries
+   goes stale when the creators ship a new version. A checkpoint that is on
+   disk and fails that hash is deleted and re-downloaded, because the
+   downloader skips a file whose size already matches. `refresh.sh` re-queries
    and compares three ways:
    - **remote ≠ config's pin** → upstream shipped a new version. Hashing the
      local file (a few minutes) tells a stale pin from a stale disk: if the

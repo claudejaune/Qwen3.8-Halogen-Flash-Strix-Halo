@@ -26,6 +26,9 @@ on_interrupt() {
     warn "Setup interrupted (Ctrl-C)."
     if [[ "$CONFIG_WRITTEN" == "true" ]]; then
         warn "Your config was saved to: $CONFIG_FILE"
+    elif [[ "${BOOT_HANDLED:-false}" == "true" ]]; then
+        warn "config.env was NOT written — the only change is the bootloader"
+        warn "edit you approved."
     else
         warn "config.env was NOT written — nothing has changed."
     fi
