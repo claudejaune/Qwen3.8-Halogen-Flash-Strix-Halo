@@ -4,7 +4,7 @@
 
 Local inference can be intimidating at first. So many engines, so many models, each with a thousand different custom quants.
 
-So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a single Strix Halo machine through [Halogen Flash Server](https://github.com/peonist-ai/halogen-flash-server) — a [high-performance](README.md#Performance) inference engine custom-built for Qwen 3.8 Flash.
+So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a single Strix Halo machine through [Halogen Flash Server](https://github.com/peonist-ai/halogen-flash-server) — a [high-performance](README.md#Performance) inference engine by [Peonist.ai](https://x.com/high52weeks), custom-built for Qwen 3.8 Flash.
 
 **The short-term goal** is to give your an *excellent* starting point for local inference on a fresh Fedora, Ubuntu, or Arch install on an AMD Strix Halo. No prior experience with running local AI models needed — the scripts guide you through every step.
 
