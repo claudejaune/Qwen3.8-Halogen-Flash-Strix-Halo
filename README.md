@@ -4,7 +4,7 @@
 
 Local inference can be intimidating at first. So many engines, so many models, each with a thousand different custom quants.
 
-So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a single Strix Halo machine through [Halogen Flash Server](https://github.com/peonist-ai/halogen-flash-server) — a [high-performance](README.md#Performance) inference engine by [Peonist.ai](https://x.com/high52weeks), custom-built for Qwen 3.8 Flash.
+So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a single Strix Halo machine through [Halogen Flash Server](https://github.com/peonist-ai/halogen-flash-server) — a [high-performance](#performance) inference engine by [Peonist.ai](https://x.com/high52weeks), custom-built for Qwen 3.8 Flash.
 
 **The short-term goal** is to give your an *excellent* starting point for local inference on a fresh Fedora, Ubuntu, or Arch install on an AMD Strix Halo. No prior experience with running local AI models needed — the scripts guide you through every step.
 
@@ -66,11 +66,11 @@ Stable, sustained 42-45 tok/s decode on multi-turn development on *real* codebas
 
 <img width="808" height="309" alt="image" src="https://github.com/user-attachments/assets/a276a4c9-192f-4a37-b9e4-6219e46c2a04" />
 
-Need raw numbers anyway? Look at the [official stats](https://github.com/peonist-ai/halogen-server#performance) or [benchmark it yourself](https://github.com/peonist-ai/halogen-server#benchmark-it-yourself) (and let us know what you find!) 
+Need raw numbers anyway? Look at the [official stats](https://github.com/peonist-ai/halogen-flash-server#measured) or [benchmark it yourself](https://github.com/peonist-ai/halogen-flash-server#measuring-a-checkpoint) (and let us know what you find!) 
 
 ## Documentation
 
-- [Environment flags](https://github.com/peonist-ai/halogen-server/blob/main/docs/FLAGS.md): for advanced users
+- [Environment flags](https://github.com/peonist-ai/halogen-flash-server/blob/main/docs/FLAGS.md): for advanced users
 - [Troubleshooting](docs/troubleshooting.md): if you get stuck
 - [How it works](docs/how-it-works.md): deets for nerds and clankers
 
@@ -81,4 +81,4 @@ Need raw numbers anyway? Look at the [official stats](https://github.com/peonist
 ## License
 
 - This repo: MIT — see [LICENSE](LICENSE)
-- Halogen Flash: [EULA](https://github.com/peonist-ai/halogen-server/blob/main/LICENSE.md)
+- Halogen Flash: [EULA](https://github.com/peonist-ai/halogen-flash-server/blob/main/LICENSE.md)
