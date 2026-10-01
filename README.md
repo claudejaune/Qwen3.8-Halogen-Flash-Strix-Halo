@@ -1,5 +1,7 @@
 # Qwen3.8-Flash-Next on AMD Strix Halo (Halogen Flash Server)
 
+<img width="1774" height="887" alt="Halogen Tech Poster with Robot Guide-anime" src="https://github.com/user-attachments/assets/5cc44348-8055-4200-b9c1-44ee909de315" />
+
 Local inference can be intimidating at first. So many engines, so many models, each with a thousand different custom quants.
 
 So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a single Strix Halo machine through [Halogen Flash Server](https://github.com/peonist-ai/halogen-flash-server) — a [high-performance](README.md#Performance) inference engine custom-built for Qwen 3.8 Flash.
