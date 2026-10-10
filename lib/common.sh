@@ -346,6 +346,18 @@ normalize_image() {
     fi
 }
 
+# version_label <image-ref> — the tag for display, prefixed with "v" when it
+# looks like a version number. `latest` and sha tags keep their own name, so
+# a prompt never reads "vlatest".
+version_label() {
+    local tag="${1##*:}"
+    if [[ "$tag" =~ ^[0-9] ]]; then
+        printf 'v%s' "$tag"
+    else
+        printf '%s' "$tag"
+    fi
+}
+
 # ── Quant selection ──────────────────────────────────────────────────────────
 # A deployment runs one quant generation. Everything here takes the
 # checkpoint's base name (as in HALOGEN_CHECKPOINT) and answers what that

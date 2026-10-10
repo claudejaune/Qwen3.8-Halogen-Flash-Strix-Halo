@@ -144,12 +144,12 @@ if [[ -n "$IMAGE_OVERRIDE" ]]; then
         ok "Backup saved as: $backup_path"
     fi
 elif [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
-    ok "config.env is on the recommended version ($HALOGEN_IMAGE)."
+    ok "config.env is on the recommended version: $(version_label "$HALOGEN_IMAGE")."
 else
     echo "  config.env pins:      $HALOGEN_IMAGE"
     echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
     echo ""
-    if ask_yes_no_strict "  Upgrade to v${HALOGEN_RECOMMENDED_IMAGE##*:}?" y; then
+    if ask_yes_no_strict "  Upgrade to $(version_label "$HALOGEN_RECOMMENDED_IMAGE")?" y; then
         NEW_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
         backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
         HALOGEN_IMAGE="$NEW_IMAGE"
@@ -162,11 +162,12 @@ fi
 
 # A pinned version tag is immutable, so a present image is current. `latest`
 # can move, so it is always offered.
+echo ""
 if ! have podman; then
     warn "podman not installed — skipping image refresh."
 elif podman image exists "$HALOGEN_IMAGE" 2>/dev/null && [[ "$HALOGEN_IMAGE" != *:latest ]]; then
-    ok "Image present: $HALOGEN_IMAGE"
-elif ask_yes_no "  Pull $HALOGEN_IMAGE now?" y; then
+    ok "Image present: $(version_label "$HALOGEN_IMAGE")"
+elif ask_yes_no "  Pull the $(version_label "$HALOGEN_IMAGE") image now?" y; then
     if podman pull "$HALOGEN_IMAGE"; then
         ok "Image refreshed."
     else
