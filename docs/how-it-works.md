@@ -58,8 +58,11 @@ container starts serving instead of downloading.
    sha256 and, when a checkpoint is already on disk, judges completeness by
    size. `./refresh.sh --verify` hashes an existing file on request.
 9. **Legacy quant** — a volume holding the deprecated w4b files gets one
-   prompt to delete them, which is what frees the room the v2 download
-   needs. The vision sidecar and the tokenizer are kept; both quants use them.
+   prompt to delete them. Without v2 on the volume that is what frees the
+   room the download needs. With v2 already installed the two coexist, and
+   the same prompt is offered as a space reclaim only — declining leaves
+   both weights in place and the server on v2. The vision sidecar and the
+   tokenizer are always kept; both quants use them.
 10. **Disk check** — the weights are ~110 GiB; setup stops under 130 GiB
     free when a download is actually needed.
 11. **Write config.env** — before anything is downloaded.
@@ -270,8 +273,17 @@ After `git pull`, `./refresh.sh`:
    them. `config.env` is rewritten **before** anything is deleted, so an
    interrupted transfer leaves the config pointing at v2 and every repair
    path leads forward to completing it rather than back to a half-deleted
-   w4b. Nothing is offered when the pinned image predates 0.15.0, or when
-   the volume already runs v2.
+   w4b. Nothing is offered when the pinned image predates 0.15.0.
+
+   **A volume holding both quants is never deleted from.** When v2 is
+   already installed there is nothing to download, so the destructive path
+   does not apply. With `HALOGEN_CHECKPOINT` unset the server already runs
+   v2 and the w4b files are left alone. If `config.env` still names w4b, a
+   prompt offers to repoint it to v2 — a config-only change that stops
+   nothing, deletes nothing, and downloads nothing. Keeping both weights
+   side by side is a supported choice. A v2 file that is present but under
+   its size floor counts as not installed, so a truncated download still
+   routes to the switch that re-fetches it.
 4. **API key** — only for a deployment that never got one. With no
    `HALOGEN_API_KEY` in `config.env`, one prompt offers to generate a key and
    write it into the Engine section. A key that already exists is reported and

@@ -390,6 +390,23 @@ quant_floor_gib() {
     esac
 }
 
+# v2_installed [models-dir] — true when the v2 checkpoint is on disk and
+# big enough to be a real file. The floor matters: a truncated or zero-byte
+# v2 is not "already downloaded", and calling it that would skip a download
+# that is genuinely needed. A volume holding both quants uses this to tell
+# a real v2 from a half-written one. Apparent size (stat %s), not disk
+# usage, so a sparse file measures correctly.
+v2_installed() {
+    local dir="${1:-${MODELS_DIR:-}}"
+    local file size floor
+    [[ -n "$dir" && -f "$dir/$HF_CHECKPOINT_FILE" ]] || return 1
+    file="$dir/$HF_CHECKPOINT_FILE"
+    size="$(stat -c '%s' "$file" 2>/dev/null || echo "")"
+    [[ "$size" =~ ^[0-9]+$ ]] || return 1
+    floor="$(quant_floor_gib "$HF_CHECKPOINT_FILE")"
+    (( size >= floor * 1073741824 ))
+}
+
 # checkpoint_host_path <container-path> <models-dir> — the host file behind
 # a HALOGEN_CHECKPOINT value. The volume is mounted at /models, so the path
 # maps onto MODELS_DIR. A value outside /models/ cannot be checked locally:

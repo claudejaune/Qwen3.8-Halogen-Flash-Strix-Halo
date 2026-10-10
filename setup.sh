@@ -775,22 +775,36 @@ echo ""
 
 # ── Legacy w4b volume ────────────────────────────────────────────────────────
 # A volume that predates the v2 checkpoint holds w4b, deprecated upstream at
-# engine 0.16.2 and outside their release testing since 0.16.1. Deleting it
-# is what frees the space the v2 download needs, so the offer comes before
-# the disk-space gate rather than after a failure.
+# engine 0.16.2 and outside their release testing since 0.16.1. When v2 is
+# not yet on the volume, deleting w4b is what frees the space the download
+# needs, so the offer comes before the disk-space gate rather than after a
+# failure. When v2 is already installed the two coexist happily: the delete
+# is a space reclaim, never a prerequisite, and setup leaves it alone.
 LEGACY_CK_PATH="$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE"
 if [[ -f "$LEGACY_CK_PATH" ]]; then
     LEGACY_TOTAL="$(du -csh "$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE" \
         "$MODELS_DIR/$HF_LEGACY_OVERLAY_FILE" "$MODELS_DIR/$HF_SPEED_OVERLAY_FILE" 2>/dev/null \
         | awk 'END { print $1 }')"
-    warn "This volume still holds the deprecated w4b quant: $LEGACY_CK_PATH"
-    echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
-    echo "  their release testing since 0.16.1. v2 is the current checkpoint."
-    echo ""
-    echo "  Deleting the w4b files frees ~${LEGACY_TOTAL:-space} for the v2 download."
-    echo "  The vision sidecar and the tokenizer are kept — both quants use them."
-    echo ""
-    if ask_yes_no "  Delete the w4b files now?" n; then
+    if v2_installed "$MODELS_DIR"; then
+        BOTH_QUANTS=1
+        warn "This volume holds both quants. v2 is installed and is what the server runs."
+        echo "  w4b is deprecated upstream at engine 0.16.2 and now sits here"
+        echo "  unused. Deleting it reclaims the space; keeping it is fine and"
+        echo "  setup leaves it alone."
+        echo ""
+        LEGACY_PROMPT="  Delete the w4b files to reclaim ~${LEGACY_TOTAL:-that space}?"
+    else
+        BOTH_QUANTS=0
+        warn "This volume still holds the deprecated w4b quant: $LEGACY_CK_PATH"
+        echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
+        echo "  their release testing since 0.16.1. v2 is the current checkpoint."
+        echo ""
+        echo "  Deleting the w4b files frees ~${LEGACY_TOTAL:-space} for the v2 download."
+        echo "  The vision sidecar and the tokenizer are kept — both quants use them."
+        echo ""
+        LEGACY_PROMPT="  Delete the w4b files now?"
+    fi
+    if ask_yes_no "$LEGACY_PROMPT" n; then
         for legacy_f in "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE" "$HF_SPEED_OVERLAY_FILE"; do
             if [[ -f "$MODELS_DIR/$legacy_f" ]]; then
                 info "Deleting $legacy_f ($(du -sh "$MODELS_DIR/$legacy_f" | cut -f1))"
@@ -798,6 +812,8 @@ if [[ -f "$LEGACY_CK_PATH" ]]; then
             fi
         done
         ok "w4b removed."
+    elif (( BOTH_QUANTS == 1 )); then
+        ok "Keeping w4b beside v2. The server runs v2."
     else
         warn "Keeping w4b. Setup still installs v2 beside it, which needs the"
         warn "space for both. ./refresh.sh offers this switch again later."

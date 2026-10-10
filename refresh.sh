@@ -264,13 +264,69 @@ offer_quant_switch() {
     echo ""
 }
 
+# offer_v2_repoint <new-sha-or-empty>
+# The volume holds both quants and config.env still selects w4b. v2 is
+# already on disk, so this is a config-only change: no stop, no delete, no
+# download. Keeping both weights around is a legitimate choice, and the
+# script must never delete a file the user still has a use for just because
+# a newer one arrived.
+offer_v2_repoint() {
+    local new_sha="$1"
+    local kept
+    kept="$(legacy_files_on_disk | tr '\n' ' ')"
+
+    echo ""
+    warn "This volume holds both quants, and config.env still selects w4b."
+    echo "  v2 is already downloaded, so nothing needs to be fetched."
+    echo "  Keeping w4b is fine — it simply sits unused while the server runs v2."
+    echo ""
+    echo "  Left on disk: $kept"
+    echo ""
+    if ask_yes_no "  Point the config at v2 and keep w4b on disk?" y; then
+        local backup_path
+        backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE" "" HALOGEN_IMAGE)"
+        HALOGEN_CHECKPOINT="/models/$HF_CHECKPOINT_FILE"
+        ok "config.env now selects v2 (backup: $backup_path)"
+        if [[ -n "$new_sha" ]]; then
+            rewrite_config_key CHECKPOINT_SHA256 "$new_sha" >/dev/null
+            CHECKPOINT_SHA256="$new_sha"
+            ok "config.env pinned to v2's sha256 (${new_sha:0:12}...)."
+        else
+            # w4b's hash must not stay pinned against a v2 file: the weights
+            # check would report a mismatch on a perfectly good file. Clearing
+            # it means "unverified", and the Weights section re-pins it as
+            # soon as the repo is reachable.
+            rewrite_config_key CHECKPOINT_SHA256 "" >/dev/null
+            CHECKPOINT_SHA256=""
+            warn "Repo unreachable, so the sha256 pin is cleared rather than"
+            warn "left pointing at w4b. ./refresh.sh re-pins it when online."
+        fi
+        CK_BASE="$HF_CHECKPOINT_FILE"
+        CK_PATH="$MODELS_DIR/$CK_BASE"
+        echo ""
+        echo "  Nothing was deleted and nothing was downloaded."
+        echo "  Start it with ./run.sh"
+    else
+        echo "  Staying on w4b. ./refresh.sh asks again next time."
+    fi
+    echo ""
+}
+
 info "=== Quant ==="
 if ! image_tag_ge "$HALOGEN_IMAGE" "$V2_MIN_IMAGE"; then
     ok "Pinned engine $HALOGEN_IMAGE predates the v2 checkpoint; staying on w4b."
 elif [[ ! -f "$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE" ]]; then
     ok "No legacy w4b checkpoint in $MODELS_DIR."
-elif [[ "$CK_BASE" == "$HF_CHECKPOINT_FILE" && -f "$MODELS_DIR/$HF_CHECKPOINT_FILE" ]]; then
-    ok "Running v2. The w4b files beside it are left alone."
+elif v2_installed "$MODELS_DIR"; then
+    # Both quants are on this volume. Nothing here deletes or downloads.
+    if [[ "$CK_BASE" == "$HF_CHECKPOINT_FILE" ]]; then
+        ok "Running v2. The w4b files beside it are left alone."
+    else
+        # Best effort: the repoint works offline, it just cannot pin the hash.
+        BOTH_REMOTE_SHA=""
+        BOTH_REMOTE_SHA="$(hf_remote_sha256 "$HF_CHECKPOINT_FILE" 2>/dev/null)" || BOTH_REMOTE_SHA=""
+        offer_v2_repoint "$BOTH_REMOTE_SHA"
+    fi
 else
     # Need v2's live hash before touching anything: the switch pins it, and
     # starting the deletion without it would leave config unverifiable.
