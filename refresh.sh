@@ -679,9 +679,9 @@ echo "============================================"
 echo "  Image:      $HALOGEN_IMAGE"
 echo "  Checkpoint: $CK_BASE"
 if [[ "${READY:-1}" == "1" ]]; then
-    echo "  Ready:      yes — ./run.sh"
+    echo -e "  Ready:      \033[1;32mYes\033[0m — ./run.sh"
 else
-    echo "  Ready:      no — the checkpoint is not complete."
+    echo -e "  Ready:      \033[1;31mNo\033[0m — the checkpoint is not complete."
     echo "              Run ./refresh.sh again and select Yes when prompted to download."
 fi
 echo "============================================"
