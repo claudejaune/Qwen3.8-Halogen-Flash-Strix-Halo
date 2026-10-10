@@ -11,6 +11,7 @@ CONFIG_ALLOWED_KEYS=(
     MODELS_DIR
     CHECKPOINT_SHA256 VISION_SHA256
     HALOGEN_IMAGE HALOGEN_MODEL_ID HALOGEN_CHECKPOINT
+    HALOGEN_API_KEY
     HALOGEN_CTX HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS
     HALOGEN_VISION_TOWER
     HALOGEN_REASONING_EFFORT
@@ -221,6 +222,9 @@ rewrite_config_key() {
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     backups_dir="$(dirname "$lib_dir")/backups"
     mkdir -p "$backups_dir"
+    # Backups hold the whole config, API key included. cp -a keeps the file's
+    # own 0600; the directory needs tightening too so it is not listable.
+    chmod 700 "$backups_dir" 2>/dev/null || true
     ts="$(date +%Y-%m-%d-%H-%M)"
     backup_path="$backups_dir/config.env-$ts"
     if [[ -e "$backup_path" ]]; then
@@ -252,6 +256,26 @@ rewrite_config_key() {
     fi
     mv -f "$tmp" "$file"
     printf '%s\n' "$backup_path"
+}
+
+# generate_api_key — a new API key in the shape this stack uses: sk-lm- plus
+# 24 hex characters. od reads a fixed byte count, so no pipe is closed
+# early and the function is safe under `set -o pipefail`.
+generate_api_key() {
+    printf 'sk-lm-%s\n' "$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-24)"
+}
+
+# api_key_present <config-file> — true when the file carries a
+# HALOGEN_API_KEY with a non-empty value. Read with grep, never executed:
+# the config may hold a secret and must stay data. A commented
+# "# HALOGEN_API_KEY=" placeholder does not count as configured.
+api_key_present() {
+    local file="$1" line value
+    [[ -f "$file" ]] || return 1
+    line="$(grep -E '^HALOGEN_API_KEY=' "$file" 2>/dev/null | tail -n1 || true)"
+    [[ -n "$line" ]] || return 1
+    value="${line#*=}"
+    [[ -n "$value" ]]
 }
 
 # GiB free on the filesystem that contains $1 (walks up if the path does not

@@ -136,8 +136,9 @@ if (( WEIGHTS_RC != 0 )); then
     echo ""
 fi
 
-# The engine port has no authentication and is never published; the API port
-# is fixed at 8731 inside the container and mapped to $PORT on the host.
+# The engine port has no authentication and is never published. The API port
+# is fixed at 8731 inside the container and mapped to $PORT on the host;
+# HALOGEN_API_KEY, when set, is what protects that port.
 if [[ "$BIND_HOST" == "0.0.0.0" ]]; then
     PUBLISH=(-p "$PORT:8731")
 else
@@ -178,6 +179,14 @@ fi
 # default (v2 on a fresh volume, or the w4b it finds on an older one).
 if [[ -n "${HALOGEN_CHECKPOINT:-}" ]]; then
     CMD+=(-e "HALOGEN_CHECKPOINT=$HALOGEN_CHECKPOINT")
+fi
+
+# API key. Passed only when non-empty: the engine refuses to start on
+# HALOGEN_API_KEY set to an empty value, so a key that failed to expand
+# cannot leave the port open. Forwarding an empty one from a hand-edited
+# config would take the server down, so it is dropped here instead.
+if [[ -n "${HALOGEN_API_KEY:-}" ]]; then
+    CMD+=(-e "HALOGEN_API_KEY=$HALOGEN_API_KEY")
 fi
 
 # Vision: off unless the tower flag is set
@@ -242,9 +251,14 @@ echo "  Vision:     $([[ "${HALOGEN_VISION_TOWER:-}" == "1" ]] && echo on || ech
 echo ""
 echo "  Endpoint:  http://$DISPLAY_HOST:$PORT/v1/chat/completions"
 echo "  Health:    http://$DISPLAY_HOST:$PORT/health"
-if [[ "$BIND_HOST" == "0.0.0.0" ]]; then
+if [[ -n "${HALOGEN_API_KEY:-}" ]]; then
+echo "  API key:   $HALOGEN_API_KEY"
+echo "  Clients send it as   Authorization: Bearer $HALOGEN_API_KEY"
+echo "                   or  x-api-key: $HALOGEN_API_KEY"
+elif [[ "$BIND_HOST" == "0.0.0.0" ]]; then
 echo ""
 echo "  NOTE: UNAUTHENTICATED. Anyone on the network can reach this server."
+echo "  ./refresh.sh offers to add an API key."
 fi
 echo ""
 echo "  Stop:      ./stop.sh (from another terminal)"

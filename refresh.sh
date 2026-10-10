@@ -290,6 +290,33 @@ else
 fi
 echo ""
 
+# ── API key ──────────────────────────────────────────────────────────────────
+# Only for a deployment that never got one. An existing key is left exactly
+# as it is: rotating it would 401 every client and agent already configured
+# with the old value, which is never something a refresh should do on its
+# own.
+info "=== API key ==="
+if api_key_present "$CONFIG_FILE"; then
+    ok "API key already configured. Not rotating it."
+    echo "  To rotate: ./setup.sh, or edit HALOGEN_API_KEY in config.env by hand."
+else
+    echo "  The server can require an API key on its API port. /health stays"
+    echo "  open; every other route answers 401 without the key."
+    if ask_yes_no "  Generate an API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+        NEW_KEY="$(generate_api_key)"
+        backup_path="$(rewrite_config_key HALOGEN_API_KEY "$NEW_KEY" "" HALOGEN_IMAGE)"
+        HALOGEN_API_KEY="$NEW_KEY"
+        ok "API key added: $NEW_KEY"
+        ok "config.env updated (backup: $backup_path)"
+        echo ""
+        echo "  Clients send it as   Authorization: Bearer $NEW_KEY"
+        echo "                   or  x-api-key: $NEW_KEY"
+    else
+        warn "No API key set. Anyone who can reach the port can use this server."
+    fi
+fi
+echo ""
+
 # ── Weights ──────────────────────────────────────────────────────────────────
 info "=== Weights ==="
 CK_OVERLAY="$CK_PATH.overlay.hgn"

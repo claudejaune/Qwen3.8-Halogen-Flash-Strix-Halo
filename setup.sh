@@ -58,6 +58,15 @@ if [[ -f "$CONFIG_FILE" ]]; then
     fi
 fi
 
+# Preserve an existing API key across setup runs. setup.sh overwrites
+# config.env with no backup, so without this every re-run would mint a new
+# key and break every client and agent already configured with the old one.
+PRESERVED_API_KEY=""
+if [[ -f "$CONFIG_FILE" ]]; then
+    PRESERVED_API_KEY="$(grep -E '^HALOGEN_API_KEY=' "$CONFIG_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+fi
+API_KEY="$PRESERVED_API_KEY"
+
 # ── Detect OS ────────────────────────────────────────────────────────────────
 OS_ID="unknown"
 OS_VERSION=""
@@ -516,17 +525,15 @@ info "=== Step 1: Network binding ==="
 echo "  1) localhost — only accessible on this machine"
 echo "  2) 0.0.0.0  — accessible over the network"
 echo ""
-echo "  NOTE: halogen-flash-server has NO authentication — no API key exists"
-echo "  in this engine. Anyone on your network can use a 0.0.0.0 server."
-echo "  If you choose LAN, protect it another way (firewall rule, VPN, or a"
-echo "  reverse proxy with auth in front of the published port)."
+echo "  A 0.0.0.0 server is reachable by everyone on your network. The next"
+echo "  step offers an API key, which is what makes that safe."
 echo ""
 read -rp "Choice [1]: " net_choice || net_choice=""
 net_choice="${net_choice:-1}"
 
 if [[ "$net_choice" == "2" ]]; then
     BIND_HOST="0.0.0.0"
-    warn "Network access enabled. This endpoint is UNAUTHENTICATED."
+    warn "Network access enabled."
 else
     BIND_HOST="127.0.0.1"
     ok "Localhost only. Other machines need an SSH tunnel."
@@ -540,6 +547,36 @@ while true; do
     echo "  Ports 1-1023 are root ports — this server never uses them." >&2
     echo "  Choose a port between 1024 and 65535." >&2
 done
+echo ""
+
+# ── Step 2: API key ──────────────────────────────────────────────────────────
+# Offered on both bindings. The engine requires the key on every route but
+# /health, and clients send it the way they already send one — as
+# Authorization: Bearer <key> for OpenAI-shaped clients, or x-api-key: <key>
+# for Anthropic-shaped ones.
+info "=== Step 2: API key ==="
+if [[ -n "$PRESERVED_API_KEY" ]]; then
+    echo "  You already have an API key: ${PRESERVED_API_KEY:0:11}..."
+    echo "  Keeping it means every client and agent you configured keeps working."
+    if ask_yes_no "  Keep the existing API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+        API_KEY="$PRESERVED_API_KEY"
+        ok "Keeping your existing API key."
+    else
+        API_KEY="$(generate_api_key)"
+        warn "New API key generated. Every client still configured with the old"
+        warn "one will get 401 until you update it."
+    fi
+else
+    echo "  The server can require an API key on its API port. /health stays"
+    echo "  open; every other route answers 401 without the key."
+    if ask_yes_no "  Generate an API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+        API_KEY="$(generate_api_key)"
+        ok "API key generated."
+    else
+        API_KEY=""
+        warn "No API key. Anyone who can reach the port can use this server."
+    fi
+fi
 echo ""
 
 # Switch to the tuned profile. The package itself is already installed (checked
@@ -558,8 +595,8 @@ else
 fi
 echo ""
 
-# ── Step 2: Vision (multimodal) ──────────────────────────────────────────────
-info "=== Step 2: Vision (multimodal) ==="
+# ── Step 3: Vision (multimodal) ──────────────────────────────────────────────
+info "=== Step 3: Vision (multimodal) ==="
 echo "  The model reads images when the vision sidecar (0.84 GiB, fetched"
 echo "  beside the weights) is loaded."
 echo ""
@@ -576,8 +613,8 @@ else
 fi
 echo ""
 
-# ── Step 3: Concurrency ──────────────────────────────────────────────────────
-info "=== Step 3: Concurrency ==="
+# ── Step 4: Concurrency ──────────────────────────────────────────────────────
+info "=== Step 4: Concurrency ==="
 echo "  Maximum simultaneous conversations. 4-8 recommended"
 echo ""
 while true; do
@@ -600,8 +637,8 @@ while true; do
 done
 echo ""
 
-# ── Step 4: Weights location ─────────────────────────────────────────────────
-info "=== Step 4: Weights ==="
+# ── Step 5: Weights location ─────────────────────────────────────────────────
+info "=== Step 5: Weights ==="
 # The fallback default used when the user asks to choose a different
 # directory after the current one turned out not to exist.
 DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
@@ -786,6 +823,14 @@ fi
 # ── Write config ─────────────────────────────────────────────────────────────
 info "=== Writing config ==="
 
+# The key line is written only when a key exists. The engine refuses to
+# start on HALOGEN_API_KEY set to an empty value, so a declined key is
+# written as a commented placeholder rather than an empty assignment.
+API_KEY_LINE="# HALOGEN_API_KEY=          # (no key set; uncomment to require one)"
+if [[ -n "$API_KEY" ]]; then
+    API_KEY_LINE="HALOGEN_API_KEY=$API_KEY"
+fi
+
 # config.env is the one file here that can hold a secret (HF_TOKEN), so create
 # it owner-only. The appends below keep the mode.
 (
@@ -805,6 +850,7 @@ MODELS_DIR=$MODELS_DIR
 # Engine
 HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_CHECKPOINT=/models/$CHECKPOINT_FILE
+$API_KEY_LINE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
 # Reasoning effort for requests that send none. Unset = the model's own
 # default (xhigh, recommended by the model card). Uncomment to change:
@@ -971,9 +1017,14 @@ fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
 echo "  Bind:       $BIND_HOST:$PORT"
-if [[ "$BIND_HOST" != "127.0.0.1" ]]; then
+if [[ -n "$API_KEY" ]]; then
+echo "  API key:    $API_KEY"
+echo "  Clients send it as   Authorization: Bearer $API_KEY"
+echo "                   or  x-api-key: $API_KEY"
+elif [[ "$BIND_HOST" != "127.0.0.1" ]]; then
 echo ""
-echo "  WARNING: no authentication. Anyone on your network can use this server."
+echo "  WARNING: no API key on a network-bound server. Anyone on your"
+echo "  network can use it. ./refresh.sh offers to add one."
 fi
 echo ""
 echo "  Start:      ./run.sh"

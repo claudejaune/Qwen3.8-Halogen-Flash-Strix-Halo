@@ -51,8 +51,9 @@ container starts serving instead of downloading.
    reboot covers the new group memberships, the new kernel, and any new params
    together. With only new params, setup carries on and asks for the reboot at
    the end.
-7. **Questions** — network binding, port, the tuned `accelerator-performance`
-   profile, vision, slots, and the weights directory (preserved across re-runs).
+7. **Questions** — network binding, port, an API key, the tuned
+   `accelerator-performance` profile, vision, slots, and the weights
+   directory (preserved across re-runs).
 8. **Checkpoint state** — queries the HF repo for the checkpoint's current
    sha256 and, when a checkpoint is already on disk, judges completeness by
    size. `./refresh.sh --verify` hashes an existing file on request.
@@ -106,13 +107,14 @@ HALOGEN_VISION_TOWER=1
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **This repo sets no API key, so a LAN server is unauthenticated.** Engine 0.17.4 added opt-in keys — set `HALOGEN_API_KEY` through `HALOGEN_EXTRA_ENV` if you want one. |
+| `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. A LAN server is reachable by everyone on the network, which is what the API key is for — setup offers one on both bindings. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
 | `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~110 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
+| `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `sk-lm-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
@@ -135,6 +137,7 @@ podman run --rm --name halogen-flash \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
   -e HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn \
+  [-e HALOGEN_API_KEY=sk-lm-...] \
   [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
@@ -269,7 +272,13 @@ After `git pull`, `./refresh.sh`:
    path leads forward to completing it rather than back to a half-deleted
    w4b. Nothing is offered when the pinned image predates 0.15.0, or when
    the volume already runs v2.
-4. Re-checks the checkpoint and the vision sidecar against the repo
+4. **API key** — only for a deployment that never got one. With no
+   `HALOGEN_API_KEY` in `config.env`, one prompt offers to generate a key and
+   write it into the Engine section. A key that already exists is reported and
+   left alone: rotating it would 401 every client and agent configured with
+   the old value, which a refresh never does on its own. Rotate by running
+   `./setup.sh` or editing `config.env`.
+5. Re-checks the checkpoint and the vision sidecar against the repo
    (Weights integrity above)
 
 An update is `git pull`, `./refresh.sh`, `./run.sh`: `run.sh` pulls the image
