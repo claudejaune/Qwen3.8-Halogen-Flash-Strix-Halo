@@ -162,7 +162,7 @@ ask_yes_no_strict() {
         case "${reply//[[:space:]]/}" in
             ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
             [Nn]|[Nn][Oo])        return 1 ;;
-            *) echo "  Not a yes or a no. Enter answers yes." >&2 ;;
+            *) echo "  Please enter y/n" >&2 ;;
         esac
     done
 }
