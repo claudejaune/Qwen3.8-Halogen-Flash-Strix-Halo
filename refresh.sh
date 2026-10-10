@@ -38,7 +38,7 @@ while (( $# )); do
     case "$1" in
         --image)
             if [[ -z "${2:-}" ]]; then
-                err "--image needs a value: a tag such as 0.17.3, or a full image reference."
+                err "--image needs a value: a tag such as 0.17.4, or a full image reference."
             fi
             IMAGE_OVERRIDE="$2"
             shift 2
@@ -129,7 +129,7 @@ stop_and_delete() {
 # ── Image ────────────────────────────────────────────────────────────────────
 # --image sets the version outright. Otherwise nothing is asked when config.env
 # pins the recommended version and the image is already on disk. A bare tag
-# such as 0.17.3 or :latest is expanded to a full reference.
+# such as 0.17.4 or :latest is expanded to a full reference.
 info "=== Image ==="
 
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
@@ -230,7 +230,7 @@ offer_quant_switch() {
     # section below would otherwise report a mismatch against the w4b hash
     # we just replaced and offer to delete the v2 files it just arrived.
     local backup_path
-    backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE")"
+    backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE" "" HALOGEN_IMAGE)"
     HALOGEN_CHECKPOINT="/models/$HF_CHECKPOINT_FILE"
     ok "config.env now selects v2 (backup: $backup_path)"
     rewrite_config_key CHECKPOINT_SHA256 "$new_sha" >/dev/null

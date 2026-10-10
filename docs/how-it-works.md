@@ -98,7 +98,7 @@ PORT=8731
 MODELS_DIR=/home/you/models/halogen-models
 
 # Engine
-HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.17.3
+HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.17.4
 HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn
 HALOGEN_KV_SLOTS=4
 HALOGEN_VISION_TOWER=1
@@ -106,7 +106,7 @@ HALOGEN_VISION_TOWER=1
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
+| `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **This repo sets no API key, so a LAN server is unauthenticated.** Engine 0.17.4 added opt-in keys — set `HALOGEN_API_KEY` through `HALOGEN_EXTRA_ENV` if you want one. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
 | `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~110 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
@@ -139,7 +139,7 @@ podman run --rm --name halogen-flash \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.3
+  ghcr.io/peonist-ai/halogen-flash-server:0.17.4
 ```
 
 - **`--ipc=host` is load-bearing**: without it the GPU runtime dies during
@@ -255,7 +255,7 @@ After `git pull`, `./refresh.sh`:
 
 1. Compares the version in `config.env` with the one this repo ships and
    offers to update it. Enter takes the recommended version; a bare tag such
-   as `0.17.3` or `:latest` is expanded to a full reference. `config.env` is
+   as `0.17.4` or `:latest` is expanded to a full reference. `config.env` is
    backed up to `backups/` first
 2. Offers to `podman pull` the image (the default is yes when the version
    changed)

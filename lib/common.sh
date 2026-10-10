@@ -22,7 +22,7 @@ CONFIG_ALLOWED_KEYS=(
 # for the version this repo ships: setup.sh writes it into a new config.env,
 # and refresh.sh offers it to an existing one.
 HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
-HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.17.3"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.17.4"
 
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
@@ -198,15 +198,21 @@ load_config() {
     _load_kv_file "$1"
 }
 
-# rewrite_config_key <KEY> <value> [config-file]
-# Back up the config file, replace KEY= (or append the key), and keep
+# rewrite_config_key <KEY> <value> [config-file] [insert-after-key]
+# Back up the config file, replace KEY= (or add the key), and keep
 # everything else byte-for-byte. Prints the backup path. The file defaults to
 # $CONFIG_FILE, which every entry script sets. Pure text rewriting plus a copy:
 # the config is never executed, so this is safe from setup.sh, which reads the
 # old config with grep for exactly that reason.
+#
+# A key the file does not have yet is appended at the end. Pass
+# [insert-after-key] to land it directly below that key instead: a
+# config.env written by an older setup.sh has no HALOGEN_CHECKPOINT, and
+# appending it would drop it under the "# Advanced (uncomment to override)"
+# header, where it reads as part of the commented-out block.
 rewrite_config_key() {
-    local key="$1" value="$2" file="${3:-${CONFIG_FILE:-}}"
-    local backup_path tmp seen=0
+    local key="$1" value="$2" file="${3:-${CONFIG_FILE:-}}" after="${4:-}"
+    local backup_path tmp seen=0 inserted_after=0
     if [[ -z "$file" ]]; then
         echo "rewrite_config_key: no config file given and CONFIG_FILE is unset" >&2
         return 1
@@ -224,11 +230,26 @@ rewrite_config_key() {
     tmp="$(mktemp "$(dirname "$file")/.config.env.tmp.XXXXXX")"
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            "$key="*) seen=1; printf '%s=%s\n' "$key" "$value" ;;
-            *)        printf '%s\n' "$line" ;;
+            "$key="*)
+                seen=1
+                printf '%s=%s\n' "$key" "$value"
+                ;;
+            *)
+                printf '%s\n' "$line"
+                if [[ -n "$after" && $inserted_after -eq 0 ]]; then
+                    case "$line" in
+                        "$after="*)
+                            printf '%s=%s\n' "$key" "$value"
+                            inserted_after=1
+                            ;;
+                    esac
+                fi
+                ;;
         esac
     done < "$file" > "$tmp"
-    (( seen )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    if (( seen == 0 && inserted_after == 0 )); then
+        printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    fi
     mv -f "$tmp" "$file"
     printf '%s\n' "$backup_path"
 }
@@ -266,7 +287,7 @@ podman_container_running() {
 }
 
 # normalize_image <value>
-# Turns what a user types into a full image reference. A bare tag (0.17.3,
+# Turns what a user types into a full image reference. A bare tag (0.17.4,
 # latest), a :tag, or a complete reference all work.
 normalize_image() {
     local value="$1"
