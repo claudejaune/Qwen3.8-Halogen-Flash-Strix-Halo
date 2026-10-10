@@ -77,6 +77,20 @@ if [[ -z "${HALOGEN_IMAGE:-}" ]]; then
     err "HALOGEN_IMAGE not set in config.env. Re-run ./setup.sh."
 fi
 
+# ── Stop the running server ──────────────────────────────────────────────────
+# A running container keeps whatever image, checkpoint and key it started
+# with, so refresh stops it first. Everything below then lands on a stopped
+# server, and nothing has to work out what is still live.
+if have podman && podman_container_running "$CONTAINER_NAME"; then
+    if ! ask_yes_no "  A Halogen Server instance is currently running. Stop it? (Required for updating)" y; then
+        echo ""
+        echo "  Refresh needs the server stopped. Run ./stop.sh, then ./refresh.sh again."
+        exit 1
+    fi
+    bash "$SCRIPT_DIR/stop.sh" || err "Could not stop the server. Nothing was changed."
+fi
+echo ""
+
 # The checkpoint this deployment runs, as a base name. Unset
 # HALOGEN_CHECKPOINT means v2. Everything below that touches the weights
 # follows this value, and the quant switch updates it in place.
@@ -584,11 +598,6 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     echo ""
 fi
 
-# ── Running server ───────────────────────────────────────────────────────────
-if have podman && podman_container_running "$CONTAINER_NAME"; then
-    echo "  The server is running. To use the new image:"
-    echo "    ./stop.sh && ./run.sh"
-fi
 echo ""
 echo "============================================"
 echo " Refresh finished."

@@ -117,7 +117,7 @@ HALOGEN_VISION_TOWER=1
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
 | `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
-| `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `sk-lm-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
+| `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `hl-gn-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
@@ -140,7 +140,7 @@ podman run --rm --name halogen-flash \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
   -e HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn \
-  [-e HALOGEN_API_KEY=sk-lm-...] \
+  [-e HALOGEN_API_KEY=hl-gn-...] \
   [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \

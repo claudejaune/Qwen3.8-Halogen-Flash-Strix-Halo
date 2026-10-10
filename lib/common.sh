@@ -280,11 +280,11 @@ rewrite_config_key() {
     printf '%s\n' "$backup_path"
 }
 
-# generate_api_key — a new API key in the shape this stack uses: sk-lm- plus
+# generate_api_key — a new API key in the shape this stack uses: hl-gn- plus
 # 24 hex characters. od reads a fixed byte count, so no pipe is closed
 # early and the function is safe under `set -o pipefail`.
 generate_api_key() {
-    printf 'sk-lm-%s\n' "$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-24)"
+    printf 'hl-gn-%s\n' "$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-24)"
 }
 
 # api_key_present <config-file> — true when the file carries a
