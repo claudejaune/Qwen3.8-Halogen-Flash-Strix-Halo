@@ -127,9 +127,10 @@ stop_and_delete() {
 }
 
 # ── Image ────────────────────────────────────────────────────────────────────
-# --image sets the version outright. Otherwise nothing is asked when config.env
-# pins the recommended version and the image is already on disk. A bare tag
-# such as 0.17.4 or :latest is expanded to a full reference.
+# Nothing is asked when config.env already pins the recommended version.
+# Otherwise one yes/no prompt either takes it or stays put. Any other
+# version is set with --image, which expands a bare tag such as 0.17.4 or
+# :latest to a full reference.
 info "=== Image ==="
 
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
@@ -148,14 +149,14 @@ else
     echo "  config.env pins:      $HALOGEN_IMAGE"
     echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
     echo ""
-    echo "  Press Enter to update to the recommended version."
-    ask IMAGE_CHOICE "Image" "$HALOGEN_RECOMMENDED_IMAGE"
-    NEW_IMAGE="$(normalize_image "$IMAGE_CHOICE")"
-    if [[ "$NEW_IMAGE" != "$HALOGEN_IMAGE" ]]; then
+    if ask_yes_no "  Upgrade to v${HALOGEN_RECOMMENDED_IMAGE##*:}?" y; then
+        NEW_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
         backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
         HALOGEN_IMAGE="$NEW_IMAGE"
         ok "config.env updated to $HALOGEN_IMAGE."
         ok "Backup saved as: $backup_path"
+    else
+        ok "Staying on $HALOGEN_IMAGE."
     fi
 fi
 
