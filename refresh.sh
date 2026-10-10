@@ -220,7 +220,7 @@ offer_quant_switch() {
     echo "  The vision sidecar and the tokenizer are kept — both quants use"
     echo "  them. Nothing else on disk is touched."
     echo ""
-    if ! ask_yes_no "  Switch this volume to v2 now? (RECOMMENDED)" n; then
+    if ! ask_yes_no "  Switch this volume to v2 now? (RECOMMENDED; deletes older quant and downloads new version ~110 GiB)" n; then
         echo "  Stayed on w4b. Nothing was deleted or downloaded."
         echo "  Run this again when ready, or switch by hand:"
         echo "    hf download $HF_REPO_ID $HF_CHECKPOINT_FILE $HF_NGRAM_FILE --local-dir $MODELS_DIR"
