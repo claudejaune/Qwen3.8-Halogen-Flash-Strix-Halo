@@ -554,11 +554,11 @@ echo ""
 # /health, and clients send it the way they already send one — as
 # Authorization: Bearer <key> for OpenAI-shaped clients, or x-api-key: <key>
 # for Anthropic-shaped ones.
-info "=== Step 2: API key ==="
+info "=== Step 2: Set API key ==="
 if [[ -n "$PRESERVED_API_KEY" ]]; then
     echo "  You already have an API key: ${PRESERVED_API_KEY:0:11}..."
     echo "  Keeping it means every client and agent you configured keeps working."
-    if ask_yes_no "  Keep the existing API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+    if ask_yes_no "  Keep the existing API key? (RECOMMENDED)" y; then
         API_KEY="$PRESERVED_API_KEY"
         ok "Keeping your existing API key."
     else
@@ -567,9 +567,8 @@ if [[ -n "$PRESERVED_API_KEY" ]]; then
         warn "one will get 401 until you update it."
     fi
 else
-    echo "  The server can require an API key on its API port. /health stays"
-    echo "  open; every other route answers 401 without the key."
-    if ask_yes_no "  Generate an API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+    echo "  Currently no API key is set. Any program can access Halogen without a key or password"
+    if ask_yes_no "  Generate an API key? (RECOMMENDED)" y; then
         API_KEY="$(generate_api_key)"
         ok "API key generated."
     else

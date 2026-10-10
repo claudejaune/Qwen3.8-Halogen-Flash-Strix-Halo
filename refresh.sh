@@ -220,7 +220,7 @@ offer_quant_switch() {
     echo "  The vision sidecar and the tokenizer are kept — both quants use"
     echo "  them. Nothing else on disk is touched."
     echo ""
-    if ! ask_yes_no "  Switch this volume to v2 now?" n; then
+    if ! ask_yes_no "  Switch this volume to v2 now? (RECOMMENDED)" n; then
         echo "  Stayed on w4b. Nothing was deleted or downloaded."
         echo "  Run this again when ready, or switch by hand:"
         echo "    hf download $HF_REPO_ID $HF_CHECKPOINT_FILE $HF_NGRAM_FILE --local-dir $MODELS_DIR"
@@ -353,14 +353,13 @@ echo ""
 # as it is: rotating it would 401 every client and agent already configured
 # with the old value, which is never something a refresh should do on its
 # own.
-info "=== API key ==="
+info "=== Set API key ==="
 if api_key_present "$CONFIG_FILE"; then
     ok "API key already configured. Not rotating it."
     echo "  To rotate: ./setup.sh, or edit HALOGEN_API_KEY in config.env by hand."
 else
-    echo "  The server can require an API key on its API port. /health stays"
-    echo "  open; every other route answers 401 without the key."
-    if ask_yes_no "  Generate an API key? (Some apps like DeepSeek Harness complain if no API key is set)" y; then
+    echo "  Currently no API key is set. Any program can access Halogen without a key or password"
+    if ask_yes_no "  Generate an API key? (RECOMMENDED)" y; then
         NEW_KEY="$(generate_api_key)"
         backup_path="$(rewrite_config_key HALOGEN_API_KEY "$NEW_KEY" "" HALOGEN_IMAGE)"
         HALOGEN_API_KEY="$NEW_KEY"
