@@ -11,11 +11,19 @@ ships as a single prebuilt image,
 configured by environment variables read once at startup; the full list with
 defaults is its [docs/FLAGS.md](https://github.com/peonist-ai/halogen-flash-server/blob/main/docs/FLAGS.md).
 
-One image serves one checkpoint: `qwen38-flash-next-w4b.hgn` (~115 GiB) plus
-a 2.4 GiB quality sidecar and a tokenizer, fetched from Hugging Face on the
-container's first start (`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next`).
-With that variable set and the volume writable, later starts re-fetch nothing
-except a stale sidecar; unset, the container opens no outbound connections.
+One image serves one checkpoint. The current one is
+`qwen38-flash-next-v2.hgn` (62 GiB) with its lookup table
+`qwen38-flash-next-ngram.hgn` (48 GiB) beside it — about 110 GiB together,
+plus a tokenizer. `HALOGEN_CHECKPOINT` names the file the engine loads, and
+setup writes the v2 path into `config.env`. The 0.14 quant,
+`qwen38-flash-next-w4b.hgn` with its 2.4 GiB quality sidecar, is deprecated
+upstream since engine 0.16.2; `refresh.sh` offers to replace it with v2 on a
+volume that still holds it.
+
+Weights come from Hugging Face on the container's first start
+(`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next`). With that
+variable set and the volume writable, later starts re-fetch nothing except a
+stale sidecar; unset, the container opens no outbound connections.
 
 `setup.sh` and `run.sh` also offer the fetch on the host side, running the
 image's bundled `hf`. A completed setup leaves the weights in place, so the
@@ -48,12 +56,15 @@ container starts serving instead of downloading.
 8. **Checkpoint state** — queries the HF repo for the checkpoint's current
    sha256 and, when a checkpoint is already on disk, judges completeness by
    size. `./refresh.sh --verify` hashes an existing file on request.
-9. **Disk check** — the weights are ~122 GiB; setup stops under 130 GiB free
-   when a download is actually needed.
-10. **Write config.env** — before anything is downloaded.
-11. **Fetch phase** — offers to `podman pull` the image, then the weights.
+9. **Legacy quant** — a volume holding the deprecated w4b files gets one
+   prompt to delete them, which is what frees the room the v2 download
+   needs. The vision sidecar and the tokenizer are kept; both quants use them.
+10. **Disk check** — the weights are ~110 GiB; setup stops under 130 GiB
+    free when a download is actually needed.
+11. **Write config.env** — before anything is downloaded.
+12. **Fetch phase** — offers to `podman pull` the image, then the weights.
     Arrived files are checked by exact byte size against the repo's live
-    listing. The download includes only the sidecars the configuration uses.
+    listing. The download includes only the files the configuration uses.
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, the only change is any bootloader edit you approved — run
@@ -87,7 +98,8 @@ PORT=8731
 MODELS_DIR=/home/you/models/halogen-models
 
 # Engine
-HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.13.5
+HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.17.3
+HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn
 HALOGEN_KV_SLOTS=4
 HALOGEN_VISION_TOWER=1
 ```
@@ -96,10 +108,11 @@ HALOGEN_VISION_TOWER=1
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. **No API key exists in this engine** — a LAN server is unauthenticated. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
-| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~122 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
+| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~110 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
+| `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
@@ -121,11 +134,12 @@ podman run --rm --name halogen-flash \
   -p 127.0.0.1:8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
+  -e HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn \
   [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.13.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.17.3
 ```
 
 - **`--ipc=host` is load-bearing**: without it the GPU runtime dies during
@@ -184,9 +198,12 @@ The weights are fetched with the engine's own command,
 image's bundled `hf` (`podman run --entrypoint /usr/local/bin/hf`, which needs
 no GPU devices). A resumable `curl` fetch covers a host with none of those.
 
-The download includes only the sidecars the configuration uses: the vision
-sidecar when vision is on, the quality overlay, and the tokenizer. It skips
-the speed overlay and the MTP head, which this deployment does not use.
+The download includes only the files the configuration uses: the checkpoint
+this deployment runs and its lookup table, the vision sidecar when vision is
+on, and the tokenizer. It skips the speed overlay and the MTP head, which
+this deployment does not use, and it skips the files of the quant generation
+this deployment does not run — so switching to v2 never pulls w4b's 118 GiB
+along with it.
 
 `setup.sh` offers the download after it writes the config; `run.sh` offers it
 when its pre-flight finds a file missing or the wrong size. Both resume from
@@ -194,7 +211,7 @@ when its pre-flight finds a file missing or the wrong size. Both resume from
 
 ## Weights integrity
 
-The checkpoint is ~115 GiB and the single most expensive thing on disk, so
+The checkpoint is ~62 GiB and the single most expensive thing on disk, so
 every layer of this repo checks it:
 
 1. **Live remote hash** (setup and refresh): the repo's tree API
@@ -207,8 +224,9 @@ every layer of this repo checks it:
      local file (a few minutes) tells a stale pin from a stale disk: if the
      local file *is* the new version, config.env is re-pinned and nothing is
      downloaded; if it is not, refresh.sh offers to stop the server and
-     delete **only** the checkpoint, its quality overlay, and the vision
-     sidecar — `./run.sh` then re-downloads (resumable).
+     delete **only** the files of the quant this deployment runs; the
+     vision sidecar and the tokenizer are left alone, and the current
+     ones are re-downloaded (resumable).
    - **remote ≠ local file** → the file is damaged; delete and re-download.
    - **everything matches** → optionally verify the local file against the
      live hash.
@@ -237,11 +255,21 @@ After `git pull`, `./refresh.sh`:
 
 1. Compares the version in `config.env` with the one this repo ships and
    offers to update it. Enter takes the recommended version; a bare tag such
-   as `0.13.5` or `:latest` is expanded to a full reference. `config.env` is
+   as `0.17.3` or `:latest` is expanded to a full reference. `config.env` is
    backed up to `backups/` first
 2. Offers to `podman pull` the image (the default is yes when the version
    changed)
-3. Re-checks the checkpoint and the vision sidecar against the repo
+3. **Quant switch** — when the pinned image is 0.15.0 or newer and the volume
+   still holds the deprecated w4b checkpoint, one prompt offers to move to
+   v2: stop the server, delete the w4b files, and download v2 and its lookup
+   table in their place. The prompt defaults to **no**; declining changes
+   nothing. The vision sidecar and the tokenizer are kept — both quants use
+   them. `config.env` is rewritten **before** anything is deleted, so an
+   interrupted transfer leaves the config pointing at v2 and every repair
+   path leads forward to completing it rather than back to a half-deleted
+   w4b. Nothing is offered when the pinned image predates 0.15.0, or when
+   the volume already runs v2.
+4. Re-checks the checkpoint and the vision sidecar against the repo
    (Weights integrity above)
 
 An update is `git pull`, `./refresh.sh`, `./run.sh`: `run.sh` pulls the image

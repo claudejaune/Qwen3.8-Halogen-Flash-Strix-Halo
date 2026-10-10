@@ -10,15 +10,21 @@
 # There is no build tooling in this repo, so this script is
 # small by design: pull the image, verify the weights, and rewrite
 # HALOGEN_IMAGE if you want a different tag.
+#
+# A volume still running the deprecated w4b quant gets one prompt to move to
+# v2: stop the server, delete the w4b files, download v2 in their place.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.env"
 CONTAINER_NAME="halogen-flash"
 DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
-CHECKPOINT="qwen38-flash-next-w4b.hgn"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 HASH_FILE="checkpoint.sha256"
+
+# The engine release that made v2 the default checkpoint. An older pinned
+# image cannot run v2, so the switch is not offered below it.
+V2_MIN_IMAGE="0.15.0"
 
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
@@ -32,7 +38,7 @@ while (( $# )); do
     case "$1" in
         --image)
             if [[ -z "${2:-}" ]]; then
-                err "--image needs a value: a tag such as 0.13.5, or a full image reference."
+                err "--image needs a value: a tag such as 0.17.3, or a full image reference."
             fi
             IMAGE_OVERRIDE="$2"
             shift 2
@@ -54,6 +60,10 @@ fi
 
 load_config "$CONFIG_FILE"
 MODELS_DIR="${MODELS_DIR:-$DEFAULT_MODELS_DIR}"
+VISION_FLAG=0
+if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
+    VISION_FLAG=1
+fi
 
 echo ""
 echo "============================================"
@@ -67,34 +77,59 @@ if [[ -z "${HALOGEN_IMAGE:-}" ]]; then
     err "HALOGEN_IMAGE not set in config.env. Re-run ./setup.sh."
 fi
 
-# rewrite_config_key <KEY> <value> — back up config.env, replace KEY= (or
-# append it), keep everything else byte-for-byte. Prints the backup path.
-rewrite_config_key() {
-    local key="$1" value="$2" backup_path tmp seen=0
-    mkdir -p "$SCRIPT_DIR/backups"
-    local ts
-    ts="$(date +%Y-%m-%d-%H-%M)"
-    backup_path="$SCRIPT_DIR/backups/config.env-$ts"
-    if [[ -e "$backup_path" ]]; then
-        backup_path="$SCRIPT_DIR/backups/config.env-$ts-$(date +%S)"
+# The checkpoint this deployment runs, as a base name. Unset
+# HALOGEN_CHECKPOINT means v2. Everything below that touches the weights
+# follows this value, and the quant switch updates it in place.
+CK_BASE="$(selected_checkpoint)"
+CK_PATH="$MODELS_DIR/$CK_BASE"
+
+# ── Shared helpers ───────────────────────────────────────────────────────────
+
+# quant_files_on_disk <base-name> — the files that quant owns which are
+# actually present, as host paths, one per line.
+quant_files_on_disk() {
+    local ck="$1" f
+    while read -r f; do
+        if [[ -f "$MODELS_DIR/$f" ]]; then
+            printf '%s\n' "$MODELS_DIR/$f"
+        fi
+    done < <(quant_files "$ck")
+}
+
+# legacy_files_on_disk — the w4b-family files present, including the speed
+# overlay. The overlay belongs to w4b and is read by nothing else, so a
+# volume leaving w4b has no further use for it.
+legacy_files_on_disk() {
+    local f
+    for f in "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE" "$HF_SPEED_OVERLAY_FILE"; do
+        if [[ -f "$MODELS_DIR/$f" ]]; then
+            printf '%s\n' "$MODELS_DIR/$f"
+        fi
+    done
+}
+
+# stop_and_delete <file>... — stop the server if it runs, then delete the
+# named files. Prompts first; returns 1 (deleting nothing) if the answer is
+# no. A failed stop exits rather than deleting under a live server.
+stop_and_delete() {
+    local f
+    if podman_container_running "$CONTAINER_NAME"; then
+        info "Stopping the server..."
+        bash "$SCRIPT_DIR/stop.sh" || err "Could not stop the server. Nothing was deleted."
     fi
-    cp -a "$CONFIG_FILE" "$backup_path"
-    tmp="$(mktemp "$SCRIPT_DIR/.config.env.tmp.XXXXXX")"
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        case "$line" in
-            "$key="*) seen=1; printf '%s=%s\n' "$key" "$value" ;;
-            *)        printf '%s\n' "$line" ;;
-        esac
-    done < "$CONFIG_FILE" > "$tmp"
-    (( seen )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
-    mv -f "$tmp" "$CONFIG_FILE"
-    printf '%s\n' "$backup_path"
+    for f in "$@"; do
+        if [[ -f "$f" ]]; then
+            info "Deleting $(basename "$f") ($(du -sh "$f" | cut -f1))"
+            rm -f "$f"
+        fi
+    done
+    return 0
 }
 
 # ── Image ────────────────────────────────────────────────────────────────────
 # --image sets the version outright. Otherwise nothing is asked when config.env
 # pins the recommended version and the image is already on disk. A bare tag
-# such as 0.13.5 or :latest is expanded to a full reference.
+# such as 0.17.3 or :latest is expanded to a full reference.
 info "=== Image ==="
 
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
@@ -139,13 +174,129 @@ elif ask_yes_no "  Pull $HALOGEN_IMAGE now?" y; then
 fi
 echo ""
 
+# ── Quant: move a w4b volume to v2 ───────────────────────────────────────────
+# The engine changed its default checkpoint at 0.15.0 and deprecated w4b at
+# 0.16.2. A volume that still holds w4b keeps serving it — the engine
+# auto-detects and downloads nothing — but it is outside upstream release
+# testing. This is the one prompt that moves it.
+#
+# The config is rewritten BEFORE anything is deleted. If the transfer is
+# interrupted, the config already points at v2, so every repair path in
+# run.sh and refresh.sh leads forward to completing the download instead of
+# back to a half-deleted w4b.
+offer_quant_switch() {
+    local new_sha="$1"
+    local -a doomed=()
+    local f total_gib
+
+    while read -r f; do
+        if [[ -n "$f" ]]; then
+            doomed+=("$f")
+        fi
+    done < <(legacy_files_on_disk)
+
+    total_gib="$(du -c "${doomed[@]}" 2>/dev/null | awk 'END { printf "%.0f", $1/1048576 }')"
+    local size_note=""
+    if [[ -n "$total_gib" && "$total_gib" != "0" ]]; then
+        size_note=" (~${total_gib} GiB)"
+    fi
+
+    echo ""
+    warn "This volume runs the deprecated w4b quant."
+    echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
+    echo "  their release testing since 0.16.1. v2 is the current checkpoint:"
+    echo "  one file plus its lookup table, about 110 GiB together."
+    echo ""
+    echo "  Switching to v2:"
+    echo "    stops the server"
+    echo "    deletes the w4b files${size_note}:"
+    for f in "${doomed[@]}"; do
+        echo "      $f"
+    done
+    echo "    downloads v2 and its lookup table (~110 GiB, resumable)"
+    echo ""
+    echo "  The vision sidecar and the tokenizer are kept — both quants use"
+    echo "  them. Nothing else on disk is touched."
+    echo ""
+    if ! ask_yes_no "  Switch this volume to v2 now?" n; then
+        echo "  Stayed on w4b. Nothing was deleted or downloaded."
+        echo "  Run this again when ready, or switch by hand:"
+        echo "    hf download $HF_REPO_ID $HF_CHECKPOINT_FILE $HF_NGRAM_FILE --local-dir $MODELS_DIR"
+        return 0
+    fi
+
+    # Config first — see the note above. The shell variable is updated with
+    # the file: load_config read the old value at start, and the weights
+    # section below would otherwise report a mismatch against the w4b hash
+    # we just replaced and offer to delete the v2 files it just arrived.
+    local backup_path
+    backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE")"
+    HALOGEN_CHECKPOINT="/models/$HF_CHECKPOINT_FILE"
+    ok "config.env now selects v2 (backup: $backup_path)"
+    rewrite_config_key CHECKPOINT_SHA256 "$new_sha" >/dev/null
+    CHECKPOINT_SHA256="$new_sha"
+    ok "config.env pinned to v2's sha256 (${new_sha:0:12}...)."
+
+    stop_and_delete "${doomed[@]}"
+    ok "Old quant removed."
+
+    CK_BASE="$HF_CHECKPOINT_FILE"
+    CK_PATH="$MODELS_DIR/$CK_BASE"
+
+    echo ""
+    info "Downloading v2 and its lookup table (~110 GiB, resumable)..."
+    if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
+        local rc=0
+        weights_check "$MODELS_DIR" "$VISION_FLAG" remote "$CK_BASE" >/dev/null 2>&1 || rc=$?
+        if (( rc == 0 )); then
+            ok "v2 is in place and verified at the expected size."
+            echo ""
+            echo "  Start it with ./run.sh"
+        else
+            warn "The download finished but the size check still reports a problem."
+            warn "Re-run ./refresh.sh or ./run.sh — the transfer resumes."
+        fi
+    else
+        warn "The download did not finish."
+        warn "The w4b files are already gone: re-run ./refresh.sh or ./run.sh"
+        warn "to resume the v2 transfer. The config already points at v2."
+    fi
+    echo ""
+}
+
+info "=== Quant ==="
+if ! image_tag_ge "$HALOGEN_IMAGE" "$V2_MIN_IMAGE"; then
+    ok "Pinned engine $HALOGEN_IMAGE predates the v2 checkpoint; staying on w4b."
+elif [[ ! -f "$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE" ]]; then
+    ok "No legacy w4b checkpoint in $MODELS_DIR."
+elif [[ "$CK_BASE" == "$HF_CHECKPOINT_FILE" && -f "$MODELS_DIR/$HF_CHECKPOINT_FILE" ]]; then
+    ok "Running v2. The w4b files beside it are left alone."
+else
+    # Need v2's live hash before touching anything: the switch pins it, and
+    # starting the deletion without it would leave config unverifiable.
+    V2_REMOTE_SHA=""
+    V2_SHA_RC=0
+    V2_REMOTE_SHA="$(hf_remote_sha256 "$HF_CHECKPOINT_FILE" 2>/dev/null)" || V2_SHA_RC=$?
+    if [[ -z "$V2_REMOTE_SHA" ]]; then
+        if (( V2_SHA_RC == 2 )); then
+            warn "Reading the repo's file list needs python3 — cannot switch to v2."
+        else
+            warn "The weights repo is unreachable — cannot switch to v2."
+        fi
+        warn "Nothing was deleted. Re-run ./refresh.sh when you are online."
+    else
+        offer_quant_switch "$V2_REMOTE_SHA"
+    fi
+fi
+echo ""
+
 # ── Weights ──────────────────────────────────────────────────────────────────
 info "=== Weights ==="
-CK_PATH="$MODELS_DIR/$CHECKPOINT"
 CK_OVERLAY="$CK_PATH.overlay.hgn"
 VISION_PATH="$MODELS_DIR/$VISION_FILE"
+CHECKPOINT="$CK_BASE"
 
-# sha256 of a ~115 GiB file takes a few minutes on NVMe; every prompt asks
+# sha256 of a ~62 GiB file takes a few minutes on NVMe; every prompt asks
 # before running one.
 hash_checkpoint() {
     info "Computing sha256 of $CHECKPOINT (a few minutes on NVMe)..."
@@ -167,30 +318,33 @@ verify_checkpoint() {
 }
 
 # offer_update_flow — the upstream checkpoint changed and the local file does
-# not match it. Stop the server, delete exactly this version's files, and let
-# ./run.sh re-download. Nothing else on disk is touched.
+# not match it. Stop the server, delete exactly this version's files, and
+# download the current ones. The vision sidecar is left to its own section,
+# which re-fetches it only if it too went stale.
 offer_update_flow() {
     local new_sha="$1"
+    local -a doomed=()
+    local f
+
+    while read -r f; do
+        if [[ -n "$f" ]]; then
+            doomed+=("$f")
+        fi
+    done < <(quant_files_on_disk "$CK_BASE")
+
     echo "  To update: the server is stopped, ONLY these files are deleted —"
-    echo "    $CK_PATH"
-    echo "    $CK_OVERLAY"
-    echo "    $VISION_PATH (if present)"
-    echo "  — and ./run.sh re-downloads (~122 GiB, resumable). Other files"
-    echo "  (tokenizer, any other models) are left alone."
+    for f in "${doomed[@]}"; do
+        echo "    $f"
+    done
+    echo "  — and the current ones are re-downloaded (~110 GiB, resumable)."
+    echo "  Other files (tokenizer, vision sidecar, any other models) are"
+    echo "  left alone."
     if ! ask_yes_no "  Stop the server and delete them now?" n; then
         echo "  Kept. Nothing deleted. Re-run ./refresh.sh when ready, or delete by hand."
         return 0
     fi
-    if podman_container_running "$CONTAINER_NAME"; then
-        bash "$SCRIPT_DIR/stop.sh" || err "Could not stop the server. Nothing was deleted."
-    fi
-    local f
-    for f in "$CK_PATH" "$CK_OVERLAY" "$VISION_PATH"; do
-        if [[ -f "$f" ]]; then
-            info "Deleting $(basename "$f") ($(du -sh "$f" | cut -f1))"
-            rm -f "$f"
-        fi
-    done
+
+    stop_and_delete "${doomed[@]}"
     ok "Old weights removed."
     local backup_path
     backup_path="$(rewrite_config_key CHECKPOINT_SHA256 "$new_sha")"
@@ -198,12 +352,18 @@ offer_update_flow() {
     if [[ -n "${VISION_SHA256:-}" ]]; then
         if V="$(hf_remote_sha256 "$VISION_FILE")"; then
             rewrite_config_key VISION_SHA256 "$V" >/dev/null
+            VISION_SHA256="$V"
         else
             warn "Could not fetch the new vision sidecar's sha256."
         fi
     fi
     echo ""
-    echo "  Now run ./run.sh — it downloads the new version (~122 GiB)."
+    echo "  Downloading the current weights (~110 GiB, resumable)..."
+    if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
+        ok "Download finished."
+    else
+        warn "The download did not finish — re-run ./refresh.sh or ./run.sh to resume."
+    fi
 }
 
 info "Checking the HF repo for the checkpoint's current sha256..."
@@ -225,6 +385,7 @@ if [[ -n "$REMOTE_CK" ]]; then
                 if [[ "$LOCAL" == "$REMOTE_CK" ]]; then
                     ok "Local file IS the new version — only config.env was stale."
                     rewrite_config_key CHECKPOINT_SHA256 "$REMOTE_CK" >/dev/null
+                    CHECKPOINT_SHA256="$REMOTE_CK"
                     ok "config.env updated to the current sha256."
                 else
                     warn "Local file matches NEITHER the pinned nor the current hash."
@@ -239,13 +400,15 @@ if [[ -n "$REMOTE_CK" ]]; then
     elif file_usable "$CK_PATH"; then
         ok "Checkpoint present and config.env matches the repo."
         CK_GIB=$(( $(stat -c '%s' "$CK_PATH") / 1073741824 ))
-        if (( CK_GIB < 110 )); then
-            warn "The checkpoint is only ${CK_GIB} GiB (expect ~115 GiB) —"
+        CK_MIN_GIB="$(quant_floor_gib "$CK_BASE")"
+        if (( CK_GIB < CK_MIN_GIB )); then
+            warn "The checkpoint is only ${CK_GIB} GiB (expect more than ${CK_MIN_GIB} GiB) —"
             warn "almost certainly incomplete. Re-download it."
         elif [[ "$VERIFY" == "true" ]]; then
             if verify_checkpoint "$REMOTE_CK"; then
                 if [[ -z "${CHECKPOINT_SHA256:-}" ]]; then
                     rewrite_config_key CHECKPOINT_SHA256 "$REMOTE_CK" >/dev/null
+                    CHECKPOINT_SHA256="$REMOTE_CK"
                     ok "config.env now pins the verified sha256."
                 fi
             else
@@ -254,7 +417,7 @@ if [[ -n "$REMOTE_CK" ]]; then
         fi
     else
         warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~122 GiB, resumes if interrupted)."
+        echo "  First ./run.sh downloads it (~110 GiB, resumes if interrupted)."
     fi
 else
     # Fall back to what we know locally.
@@ -266,8 +429,9 @@ else
     if file_usable "$CK_PATH"; then
         ok "Checkpoint present: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
         CK_GIB=$(( $(stat -c '%s' "$CK_PATH") / 1073741824 ))
-        if (( CK_GIB < 110 )); then
-            warn "The checkpoint is only ${CK_GIB} GiB (expect ~115 GiB) —"
+        CK_MIN_GIB="$(quant_floor_gib "$CK_BASE")"
+        if (( CK_GIB < CK_MIN_GIB )); then
+            warn "The checkpoint is only ${CK_GIB} GiB (expect more than ${CK_MIN_GIB} GiB) —"
             warn "almost certainly incomplete. Re-download it."
         fi
         if [[ "$VERIFY" == "true" ]]; then
@@ -286,7 +450,7 @@ else
         fi
     else
         warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~122 GiB, resumes if interrupted)."
+        echo "  First ./run.sh downloads it (~110 GiB, resumes if interrupted)."
     fi
 fi
 echo ""
@@ -325,6 +489,7 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
             fi
         elif [[ "${VISION_SHA256:-}" != "$REMOTE_VISION" ]]; then
             rewrite_config_key VISION_SHA256 "$REMOTE_VISION" >/dev/null
+            VISION_SHA256="$REMOTE_VISION"
             ok "Vision sidecar current; config.env's VISION_SHA256 refreshed."
         else
             ok "Vision sidecar present and current."
@@ -343,4 +508,7 @@ fi
 echo ""
 echo "============================================"
 echo " Refresh finished."
+echo "============================================"
+echo "  Image:      $HALOGEN_IMAGE"
+echo "  Checkpoint: $CK_BASE"
 echo "============================================"

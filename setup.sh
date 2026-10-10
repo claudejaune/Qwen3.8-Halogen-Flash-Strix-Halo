@@ -4,7 +4,7 @@
 # Writes config.env (plain KEY=value data) which run.sh reads. Re-running
 # setup.sh overwrites config.env with no backup.
 # The engine is halogen-flash-server: a prebuilt container image. No local
-# builds. Weights (~122 GiB) are fetched by the container on first start
+# builds. Weights (~110 GiB) are fetched by the container on first start
 # (HALOGEN_DOWNLOAD); setup offers the same transfer itself, so a completed
 # setup usually means ./run.sh starts a server rather than a download.
 set -euo pipefail
@@ -45,7 +45,7 @@ trap on_interrupt INT
 # The version this repo ships. The single source of truth is in lib/common.sh.
 DEFAULT_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
 MODELS_DIR="$HOME/models/halogen-models"
-CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
+CHECKPOINT_FILE="$HF_CHECKPOINT_FILE"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 DISK_MIN_GIB=130
 
@@ -613,7 +613,7 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Directory the weights (~122 GiB) are downloaded into on first"
+    echo "  Directory the weights (~110 GiB) are downloaded into on first"
     echo "  ./run.sh. Press Enter for the default ($THIS_DEFAULT)."
     echo "  It must be an absolute path."
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
@@ -724,14 +724,48 @@ size_gib() {
 if [[ -f "$CK_PATH" ]]; then
     echo "  A checkpoint already exists: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
     CK_GIB="$(size_gib "$CK_PATH")"
-    if (( CK_GIB >= 110 )); then
+    CK_MIN_GIB="$(quant_floor_gib "$CHECKPOINT_FILE")"
+    if (( CK_GIB >= CK_MIN_GIB )); then
         info "The file is ~${CK_GIB} GiB — treated as present (size only)."
         CK_NEEDS_DOWNLOAD=false
     else
-        warn "The file is only ~${CK_GIB} GiB (expect ~115) — incomplete."
+        warn "The file is only ~${CK_GIB} GiB (expect more than ${CK_MIN_GIB}) — incomplete."
     fi
 else
-    info "No checkpoint on disk yet."
+    info "No ${CHECKPOINT_FILE} on disk yet."
+fi
+echo ""
+
+# ── Legacy w4b volume ────────────────────────────────────────────────────────
+# A volume that predates the v2 checkpoint holds w4b, deprecated upstream at
+# engine 0.16.2 and outside their release testing since 0.16.1. Deleting it
+# is what frees the space the v2 download needs, so the offer comes before
+# the disk-space gate rather than after a failure.
+LEGACY_CK_PATH="$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE"
+if [[ -f "$LEGACY_CK_PATH" ]]; then
+    LEGACY_TOTAL="$(du -csh "$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE" \
+        "$MODELS_DIR/$HF_LEGACY_OVERLAY_FILE" "$MODELS_DIR/$HF_SPEED_OVERLAY_FILE" 2>/dev/null \
+        | awk 'END { print $1 }')"
+    warn "This volume still holds the deprecated w4b quant: $LEGACY_CK_PATH"
+    echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
+    echo "  their release testing since 0.16.1. v2 is the current checkpoint."
+    echo ""
+    echo "  Deleting the w4b files frees ~${LEGACY_TOTAL:-space} for the v2 download."
+    echo "  The vision sidecar and the tokenizer are kept — both quants use them."
+    echo ""
+    if ask_yes_no "  Delete the w4b files now?" n; then
+        for legacy_f in "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE" "$HF_SPEED_OVERLAY_FILE"; do
+            if [[ -f "$MODELS_DIR/$legacy_f" ]]; then
+                info "Deleting $legacy_f ($(du -sh "$MODELS_DIR/$legacy_f" | cut -f1))"
+                rm -f "$MODELS_DIR/$legacy_f"
+            fi
+        done
+        ok "w4b removed."
+    else
+        warn "Keeping w4b. Setup still installs v2 beside it, which needs the"
+        warn "space for both. ./refresh.sh offers this switch again later."
+    fi
+    echo ""
 fi
 echo ""
 
@@ -742,7 +776,7 @@ if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
         warn "Could not check free disk space for $MODELS_DIR."
     elif (( avail < DISK_MIN_GIB )); then
         err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The first
-./run.sh downloads the weights and sidecars (~122 GiB in all); setup needs at
+./run.sh downloads the weights and sidecars (~110 GiB in all); setup needs at
 least ${DISK_MIN_GIB} GiB free. Free some space and re-run ./setup.sh."
     fi
 else
@@ -770,6 +804,7 @@ MODELS_DIR=$MODELS_DIR
 
 # Engine
 HALOGEN_IMAGE=$DEFAULT_IMAGE
+HALOGEN_CHECKPOINT=/models/$CHECKPOINT_FILE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
 # Reasoning effort for requests that send none. Unset = the model's own
 # default (xhigh, recommended by the model card). Uncomment to change:
@@ -822,7 +857,7 @@ else
 fi
 echo ""
 
-# setup used to leave the ~122 GiB to the container's first start. It now
+# setup used to leave the ~110 GiB to the container's first start. It now
 # offers the transfer here, with the SAME command the engine runs for
 # HALOGEN_DOWNLOAD (hf download <repo> --local-dir), so a tree fetched here is
 # exactly the tree the container would have fetched. It resumes if
@@ -835,7 +870,7 @@ WEIGHTS_READY=false
 
 info "=== Fetch phase: weights ==="
 WEIGHTS_RC=0
-WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
+WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote "$CHECKPOINT_FILE" 2>/dev/null)" || WEIGHTS_RC=$?
 if (( WEIGHTS_RC == 0 )); then
     WEIGHTS_READY=true
     ok "Weights present and the expected size in $MODELS_DIR."
@@ -854,17 +889,17 @@ else
         echo "  vision on to fetch the sidecar."
         echo ""
     fi
-    if ask_yes_no "  Download the weights now (~122 GiB)?" y; then
+    if ask_yes_no "  Download the weights now (~110 GiB)?" y; then
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
             warn "Only ${avail} GiB free on the disk that holds $MODELS_DIR."
             warn "Skipping the download. Free space and re-run ./setup.sh."
         else
-            if hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG"; then
+            if hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG" "$CHECKPOINT_FILE"; then
                 ok "Download finished."
                 WEIGHTS_RC=0
-                WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote 2>/dev/null)" || WEIGHTS_RC=$?
+                WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote "$CHECKPOINT_FILE" 2>/dev/null)" || WEIGHTS_RC=$?
                 if (( WEIGHTS_RC == 0 )); then
                     WEIGHTS_READY=true
                     ok "Weights verified: every file is present at the expected size."
@@ -927,10 +962,11 @@ echo " Setup complete!"
 echo "============================================"
 echo ""
 echo "  Image:      $DEFAULT_IMAGE"
+echo "  Checkpoint: $CHECKPOINT_FILE"
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Weights:    $MODELS_DIR (ready)"
 else
-echo "  Weights:    $MODELS_DIR (downloaded on first run, ~122 GiB)"
+echo "  Weights:    $MODELS_DIR (downloaded on first run, ~110 GiB)"
 fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
@@ -948,7 +984,7 @@ if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  The weights are in place; ./run.sh loads them (minutes on the first"
 echo "  start). Watch its output for progress."
 else
-echo "  First start downloads the weights (~122 GiB, resumes if interrupted)"
+echo "  First start downloads the weights (~110 GiB, resumes if interrupted)"
 echo "  and then takes minutes to load them. Watch ./run.sh's output."
 fi
 echo ""

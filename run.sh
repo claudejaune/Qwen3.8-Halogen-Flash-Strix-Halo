@@ -93,8 +93,12 @@ VISION_FLAG=0
 if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     VISION_FLAG=1
 fi
+# Which quant this start runs. Unset HALOGEN_CHECKPOINT means v2, the
+# engine's own default; the pre-flight checks and any download follow that
+# choice so a v2 start is never measured against w4b's files.
+CK_BASE="$(selected_checkpoint)"
 WEIGHTS_RC=0
-WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" 2>/dev/null)" || WEIGHTS_RC=$?
+WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
 if (( WEIGHTS_RC != 0 )); then
     warn "The weights in $MODELS_DIR are not all in place:"
     while read -r st file detail; do
@@ -108,14 +112,14 @@ if (( WEIGHTS_RC != 0 )); then
     echo "  HALOGEN_DOWNLOAD fetches a MISSING checkpoint on start, but it"
     echo "  never repairs a file that is present and the wrong size."
     echo ""
-    if ask_yes_no "  Download / repair the weights now (~122 GiB)?" y; then
+    if ask_yes_no "  Download / repair the weights now (~110 GiB)?" y; then
         if have podman && ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
             info "Pulling the image first (its own 'hf' does the download)..."
             podman pull "$HALOGEN_IMAGE" || warn "Image pull failed."
         fi
-        if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG"; then
+        if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
             WEIGHTS_RC=0
-            WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" 2>/dev/null)" || WEIGHTS_RC=$?
+            WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
             if (( WEIGHTS_RC == 0 )); then
                 ok "Weights ready."
             else
@@ -167,6 +171,13 @@ if [[ -n "${HALOGEN_CTX:-}" ]]; then
 fi
 if [[ -n "${HALOGEN_MODEL_ID:-}" ]]; then
     CMD+=(-e "HALOGEN_MODEL_ID=$HALOGEN_MODEL_ID")
+fi
+
+# Which checkpoint the engine loads, as a path inside the container's
+# /models volume. Unset passes nothing, and the engine picks its own
+# default (v2 on a fresh volume, or the w4b it finds on an older one).
+if [[ -n "${HALOGEN_CHECKPOINT:-}" ]]; then
+    CMD+=(-e "HALOGEN_CHECKPOINT=$HALOGEN_CHECKPOINT")
 fi
 
 # Vision: off unless the tower flag is set
@@ -223,10 +234,11 @@ echo "============================================"
 echo " Qwen3.8-Flash-Next Server (halogen-flash)"
 echo "============================================"
 echo ""
-echo "  Image:     $HALOGEN_IMAGE"
-echo "  Weights:   $MODELS_DIR"
-echo "  Slots:     ${HALOGEN_KV_SLOTS:-4 (default)}"
-echo "  Vision:    $([[ "${HALOGEN_VISION_TOWER:-}" == "1" ]] && echo on || echo off)"
+echo "  Image:      $HALOGEN_IMAGE"
+echo "  Weights:    $MODELS_DIR"
+echo "  Checkpoint: $CK_BASE"
+echo "  Slots:      ${HALOGEN_KV_SLOTS:-4 (default)}"
+echo "  Vision:     $([[ "${HALOGEN_VISION_TOWER:-}" == "1" ]] && echo on || echo off)"
 echo ""
 echo "  Endpoint:  http://$DISPLAY_HOST:$PORT/v1/chat/completions"
 echo "  Health:    http://$DISPLAY_HOST:$PORT/health"
@@ -241,7 +253,7 @@ if (( WEIGHTS_RC == 0 )); then
 echo "  The weights are in place; loading them takes minutes on a cold start."
 echo "  The download is skipped whenever the files are complete."
 else
-echo "  The weights are not complete: this start downloads them (~122 GiB,"
+echo "  The weights are not complete: this start downloads them (~110 GiB,"
 echo "  resumes if interrupted) and then loads them for minutes."
 fi
 echo ""

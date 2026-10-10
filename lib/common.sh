@@ -10,7 +10,7 @@ CONFIG_ALLOWED_KEYS=(
     BIND_HOST PORT
     MODELS_DIR
     CHECKPOINT_SHA256 VISION_SHA256
-    HALOGEN_IMAGE HALOGEN_MODEL_ID
+    HALOGEN_IMAGE HALOGEN_MODEL_ID HALOGEN_CHECKPOINT
     HALOGEN_CTX HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS
     HALOGEN_VISION_TOWER
     HALOGEN_REASONING_EFFORT
@@ -22,7 +22,7 @@ CONFIG_ALLOWED_KEYS=(
 # for the version this repo ships: setup.sh writes it into a new config.env,
 # and refresh.sh offers it to an existing one.
 HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
-HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.13.5"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.17.3"
 
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
@@ -31,13 +31,29 @@ HF_REPO_ID="peonist-ai/halogen-qwen3.8-flash-next"
 HF_TREE_API="https://huggingface.co/api/models/$HF_REPO_ID/tree/main"
 HF_RESOLVE_URL="https://huggingface.co/$HF_REPO_ID/resolve/main"
 
-# The weights the server needs, by name. The engine downloads the WHOLE repo
-# (HALOGEN_DOWNLOAD); these are the files this repo checks and reports on.
-# Sizes and sha256s come live from the tree API, so a file the creators
-# replace under the same name is still checked against what is current.
-HF_CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
-HF_OVERLAY_FILE="qwen38-flash-next-w4b.overlay.hgn"
+# The weights the server needs, by name. Sizes and sha256s come live from
+# the tree API, so a file the creators replace under the same name is still
+# checked against what is current.
+#
+# Two quant generations exist in the weights repo, and a deployment runs one
+# of them. HALOGEN_CHECKPOINT names which; unset means v2, the engine's own
+# default since 0.15.0.
+#
+# v2 is the current quant: one checkpoint file with no sidecar, plus its
+# lookup table beside it (~110 GiB together).
+HF_CHECKPOINT_FILE="qwen38-flash-next-v2.hgn"
+HF_NGRAM_FILE="qwen38-flash-next-ngram.hgn"
+# w4b is the 0.14 quant: the checkpoint plus its quality sidecar. Deprecated
+# upstream since 0.16.2 and outside its release testing, though it still
+# loads in 0.17.x. refresh.sh offers to replace it with v2 on a volume that
+# still holds it.
+HF_LEGACY_CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
+HF_LEGACY_OVERLAY_FILE="qwen38-flash-next-w4b.overlay.hgn"
+# The vision sidecar is shared by both quants.
 HF_VISION_FILE="qwen38-flash-next-vision.hgn"
+# Never needed by this repo: the speed overlay is read only by
+# HALOGEN_CK_OVERLAY, and the MTP head only a GGUF trunk reads — the .hgn
+# checkpoints carry their own head.
 HF_SPEED_OVERLAY_FILE="qwen38-flash-next-w4b.overlay-speed.hgn"
 HF_MTP_FILE="qwen38-flash-next-mtp.hgn"
 
@@ -182,6 +198,41 @@ load_config() {
     _load_kv_file "$1"
 }
 
+# rewrite_config_key <KEY> <value> [config-file]
+# Back up the config file, replace KEY= (or append the key), and keep
+# everything else byte-for-byte. Prints the backup path. The file defaults to
+# $CONFIG_FILE, which every entry script sets. Pure text rewriting plus a copy:
+# the config is never executed, so this is safe from setup.sh, which reads the
+# old config with grep for exactly that reason.
+rewrite_config_key() {
+    local key="$1" value="$2" file="${3:-${CONFIG_FILE:-}}"
+    local backup_path tmp seen=0
+    if [[ -z "$file" ]]; then
+        echo "rewrite_config_key: no config file given and CONFIG_FILE is unset" >&2
+        return 1
+    fi
+    local lib_dir backups_dir ts
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    backups_dir="$(dirname "$lib_dir")/backups"
+    mkdir -p "$backups_dir"
+    ts="$(date +%Y-%m-%d-%H-%M)"
+    backup_path="$backups_dir/config.env-$ts"
+    if [[ -e "$backup_path" ]]; then
+        backup_path="$backups_dir/config.env-$ts-$(date +%S)"
+    fi
+    cp -a "$file" "$backup_path"
+    tmp="$(mktemp "$(dirname "$file")/.config.env.tmp.XXXXXX")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            "$key="*) seen=1; printf '%s=%s\n' "$key" "$value" ;;
+            *)        printf '%s\n' "$line" ;;
+        esac
+    done < "$file" > "$tmp"
+    (( seen )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv -f "$tmp" "$file"
+    printf '%s\n' "$backup_path"
+}
+
 # GiB free on the filesystem that contains $1 (walks up if the path does not
 # exist yet). Prints an integer. Returns 1 if df fails.
 disk_avail_gib() {
@@ -215,7 +266,7 @@ podman_container_running() {
 }
 
 # normalize_image <value>
-# Turns what a user types into a full image reference. A bare tag (0.13.5,
+# Turns what a user types into a full image reference. A bare tag (0.17.3,
 # latest), a :tag, or a complete reference all work.
 normalize_image() {
     local value="$1"
@@ -226,6 +277,99 @@ normalize_image() {
     else
         printf '%s\n' "${HALOGEN_IMAGE_REPO}:${value}"
     fi
+}
+
+# ── Quant selection ──────────────────────────────────────────────────────────
+# A deployment runs one quant generation. Everything here takes the
+# checkpoint's base name (as in HALOGEN_CHECKPOINT) and answers what that
+# quant needs on disk.
+
+# selected_checkpoint [config-value] [models-dir]
+# The base name of the checkpoint this deployment actually runs. A set
+# HALOGEN_CHECKPOINT decides it. Unset, this mirrors the engine's own
+# auto-detect: a volume holding w4b and not v2 keeps serving w4b and
+# downloads nothing, so w4b is the honest answer there; every other case
+# runs v2, the engine's default since 0.15.0.
+selected_checkpoint() {
+    local cp="${1:-${HALOGEN_CHECKPOINT:-}}"
+    local dir="${2:-${MODELS_DIR:-}}"
+    if [[ -n "$cp" ]]; then
+        printf '%s\n' "$(basename "$cp")"
+        return 0
+    fi
+    if [[ -n "$dir" && -f "$dir/$HF_LEGACY_CHECKPOINT_FILE" \
+          && ! -f "$dir/$HF_CHECKPOINT_FILE" ]]; then
+        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE"
+        return 0
+    fi
+    printf '%s\n' "$HF_CHECKPOINT_FILE"
+}
+
+# quant_is_legacy <base-name> — true for the deprecated w4b quant.
+quant_is_legacy() {
+    [[ "$1" == "$HF_LEGACY_CHECKPOINT_FILE" ]]
+}
+
+# quant_files <base-name> — the .hgn files that quant needs, one per line.
+# w4b is two files (the checkpoint and its quality sidecar); v2 is one file
+# plus its lookup table.
+quant_files() {
+    if quant_is_legacy "$1"; then
+        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+    else
+        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+    fi
+}
+
+# other_quant_files <base-name> — the .hgn files belonging to the quant this
+# deployment does NOT run. Excluded from every download so one switch never
+# pulls both generations (~170 GiB) when only ~110 GiB is wanted.
+other_quant_files() {
+    if quant_is_legacy "$1"; then
+        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+    else
+        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+    fi
+}
+
+# quant_floor_gib <file-name> — the local size floor in GiB, used only when
+# the repo's live listing is unavailable. A file under its floor is treated
+# as truncated. 0 means no floor beyond the empty-file check.
+quant_floor_gib() {
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE") printf '110\n' ;;
+        "$HF_CHECKPOINT_FILE")        printf '55\n'  ;;
+        "$HF_NGRAM_FILE")            printf '42\n'  ;;
+        "$HF_LEGACY_OVERLAY_FILE")   printf '2\n'   ;;
+        *)                           printf '0\n'   ;;
+    esac
+}
+
+# checkpoint_host_path <container-path> <models-dir> — the host file behind
+# a HALOGEN_CHECKPOINT value. The volume is mounted at /models, so the path
+# maps onto MODELS_DIR. A value outside /models/ cannot be checked locally:
+# the base name in <models-dir> is used and a warning says so.
+checkpoint_host_path() {
+    local cp="$1" dir="$2" rel
+    if [[ "$cp" == /models/* && "$cp" != /models ]]; then
+        rel="${cp#/models/}"
+        printf '%s/%s\n' "$dir" "$rel"
+        return 0
+    fi
+    warn "HALOGEN_CHECKPOINT=$cp is outside the container's /models volume; checking $dir/$(basename "$cp") instead."
+    printf '%s/%s\n' "$dir" "$(basename "$cp")"
+}
+
+# image_tag_ge <image-ref> <min-version> — true when the image's tag is at
+# or above <min-version>. A non-numeric tag (latest, a digest) counts as
+# capable, so newer behaviour is never skipped for it.
+image_tag_ge() {
+    local ref="$1" min="$2" tag
+    tag="${ref##*:}"
+    if [[ ! "$tag" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        return 0
+    fi
+    [[ "$(printf '%s\n%s\n' "$tag" "$min" | sort -V | head -n1)" == "$min" ]]
 }
 
 # ── Hugging Face helpers ─────────────────────────────────────────────────────
@@ -287,9 +431,11 @@ bytes_gib() {
     awk -v b="${1:-0}" 'BEGIN { printf "%.1f", b / 1073741824 }'
 }
 
-# _weights_check_pass <models-dir> <vision> <table>
+# _weights_check_pass <models-dir> <vision> <table> [checkpoint-base-name]
 # The core pass. With a non-empty <table> (from hf_remote_table) sizes are
-# compared exactly; with an empty one the historical local floors are used.
+# compared exactly; with an empty one the local floors from quant_floor_gib
+# are used. The files checked are the ones the named quant needs (see
+# quant_files), plus the tokenizer and, when vision is on, the sidecar.
 # Prints one line per file: "<status> <file> <detail>". Status is
 #   ok         present, and the size matches the repo's current listing
 #   unverified present, size plausible, no listing available
@@ -297,13 +443,19 @@ bytes_gib() {
 #   incomplete present but the wrong size (truncated / partial)
 # Sizes in <detail> are GiB, for display.
 _weights_check_pass() {
-    local dir="$1" vision="$2" table="$3" rc=0
-    local -a files=("$HF_CHECKPOINT_FILE" "$HF_OVERLAY_FILE")
+    local dir="$1" vision="$2" table="$3" ck="${4:-$HF_CHECKPOINT_FILE}" rc=0
+    local -a files=()
+    local qf
+    while read -r qf; do
+        if [[ -n "$qf" ]]; then
+            files+=("$qf")
+        fi
+    done < <(quant_files "$ck")
     if [[ "$vision" == "1" ]]; then
         files+=("$HF_VISION_FILE")
     fi
 
-    local f path actual expected
+    local f path actual expected floor
     for f in "${files[@]}"; do
         path="$dir/$f"
         if [[ ! -f "$path" ]]; then
@@ -325,15 +477,18 @@ _weights_check_pass() {
                 printf 'incomplete %s %s GiB of %s GiB\n' "$f" "$(bytes_gib "$actual")" "$(bytes_gib "$expected")"
                 rc=1
             fi
-        elif [[ "$f" == "$HF_CHECKPOINT_FILE" && "$actual" -lt $((110 * 1073741824)) ]]; then
-            # No listing: the historical size floor. ~115 GiB expected.
-            printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
-            rc=1
-        elif (( actual == 0 )); then
-            printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
-            rc=1
         else
-            printf 'unverified %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
+            floor="$(quant_floor_gib "$f")"
+            if (( actual < floor * 1073741824 )); then
+                # No listing: the local size floor for this file.
+                printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
+                rc=1
+            elif (( actual == 0 )); then
+                printf 'incomplete %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
+                rc=1
+            else
+                printf 'unverified %s %s GiB\n' "$f" "$(bytes_gib "$actual")"
+            fi
         fi
     done
 
@@ -347,7 +502,7 @@ _weights_check_pass() {
     return $rc
 }
 
-# weights_check <models-dir> [vision 0|1] [mode auto|remote|local]
+# weights_check <models-dir> [vision 0|1] [mode auto|remote|local] [checkpoint-base-name]
 # One line per file this repo needs: "<status> <file> <detail>" (see
 # _weights_check_pass). Returns 0 when every required file is ok or
 # unverified, 1 otherwise.
@@ -360,16 +515,17 @@ _weights_check_pass() {
 #   truncated file is caught by size alone. setup.sh uses this.
 # mode local: never touch the network.
 weights_check() {
-    local dir="$1" vision="${2:-0}" mode="${3:-auto}"
+    local dir="$1" vision="${2:-0}" mode="${3:-auto}" ck
+    ck="$(selected_checkpoint "${4:-}")"
 
     if [[ "$mode" == "local" ]]; then
-        _weights_check_pass "$dir" "$vision" ""
+        _weights_check_pass "$dir" "$vision" "" "$ck"
         return $?
     fi
 
     if [[ "$mode" == "auto" ]]; then
         local first
-        if first="$(_weights_check_pass "$dir" "$vision" "")"; then
+        if first="$(_weights_check_pass "$dir" "$vision" "" "$ck")"; then
             printf '%s\n' "$first"
             return 0
         fi
@@ -377,11 +533,14 @@ weights_check() {
 
     local table
     table="$(hf_remote_table 2>/dev/null)" || table=""
-    _weights_check_pass "$dir" "$vision" "$table"
+    _weights_check_pass "$dir" "$vision" "$table" "$ck"
 }
 
-# hf_download_excludes [vision 0|1]
+# hf_download_excludes [vision 0|1] [checkpoint-base-name]
 # Prints, one per line, the weights-repo files this deployment does not need:
+#   - the files of the quant generation this deployment does not run, so a
+#     v2 volume never pulls w4b and its sidecar (~118 GiB) and a w4b
+#     volume never pulls v2 and its lookup table (~110 GiB)
 #   - the vision sidecar, unless vision is enabled (0.84 GiB)
 #   - the speed overlay, which only HALOGEN_CK_OVERLAY names (2.5 GiB)
 #   - the MTP head, which only a GGUF trunk reads — the .hgn checkpoint
@@ -391,25 +550,28 @@ weights_check() {
 # <checkpoint>.overlay.hgn, so nothing re-fetches an excluded file. Turning
 # vision on and re-running setup fetches the sidecar then.
 hf_download_excludes() {
-    local vision="${1:-0}"
+    local vision="${1:-0}" ck
+    ck="$(selected_checkpoint "${2:-}")"
     printf '%s\n' "$HF_SPEED_OVERLAY_FILE" "$HF_MTP_FILE"
+    other_quant_files "$ck"
     if [[ "$vision" != "1" ]]; then
         printf '%s\n' "$HF_VISION_FILE"
     fi
 }
 
-# hf_download_models <dest-dir> [image] [vision 0|1]
+# hf_download_models <dest-dir> [image] [vision 0|1] [checkpoint-base-name]
 # Fetch the weights repo into <dest-dir> with the same command the engine's
 # entrypoint runs for HALOGEN_DOWNLOAD:
 #   HF_HUB_OFFLINE=0 hf download <repo> --local-dir <dir>
-# minus the files hf_download_excludes() names, so a config that does not use
-# the vision sidecar does not pay for it. Resumable. Preference: host `hf`,
-# then `uvx hf` (the same CLI, no install beyond uv), then the engine
-# image's own `hf` (podman; no GPU needed, so this works before a
-# kernel-param reboot), then resumable curl. Returns non-zero on failure;
-# whatever arrived is left in place so a re-run resumes.
+# minus the files hf_download_excludes() names, so a config pays only for the
+# quant it runs and, if vision is off, not for the sidecar. Resumable.
+# Preference: host `hf`, then `uvx hf` (the same CLI, no install beyond uv),
+# then the engine image's own `hf` (podman; no GPU needed, so this works
+# before a kernel-param reboot), then resumable curl. Returns non-zero on
+# failure; whatever arrived is left in place so a re-run resumes.
 hf_download_models() {
-    local dir="$1" image="${2:-}" vision="${3:-0}"
+    local dir="$1" image="${2:-}" vision="${3:-0}" ck
+    ck="$(selected_checkpoint "${4:-}")"
     mkdir -p "$dir"
 
     # Built once; both the host and the container path use it.
@@ -419,7 +581,7 @@ hf_download_models() {
         if [[ -n "$pat" ]]; then
             excludes+=(--exclude "$pat")
         fi
-    done < <(hf_download_excludes "$vision")
+    done < <(hf_download_excludes "$vision" "$ck")
 
     if have hf; then
         info "Downloading the weights with the host 'hf' CLI (resumes if interrupted)..."
@@ -444,7 +606,7 @@ hf_download_models() {
         info "Downloading the weights with the engine image's own 'hf' (resumes if interrupted)..."
         local -a args=(run --rm --entrypoint /usr/local/bin/hf -e HF_HUB_OFFLINE=0)
         # Give hf a tty when we have one, so its progress bars render; without
-        # one it goes quiet for the length of a 122 GiB transfer.
+        # one it goes quiet for the length of a 110 GiB transfer.
         if [[ -t 1 ]]; then
             args+=(-t)
         fi
@@ -460,7 +622,7 @@ hf_download_models() {
 
     if have curl; then
         warn "Neither 'hf' nor the engine image is usable — falling back to resumable curl."
-        _hf_curl_fetch_tree "$dir" "$vision"
+        _hf_curl_fetch_tree "$dir" "$vision" "$ck"
         return $?
     fi
 
@@ -468,12 +630,16 @@ hf_download_models() {
     return 1
 }
 
+# _hf_curl_fetch_tree <dest-dir> [vision 0|1] [checkpoint-base-name]
 # Last-resort fetch with curl: every LFS file the repo lists (or the names
-# this repo knows, when offline), then the tokenizer. Single connection per
-# file, resumable with -C -. The engine never uses this path; it exists so a
-# host with neither `hf` nor a usable image can still get the weights.
+# this repo knows for the selected quant, when offline), then the tokenizer.
+# Single connection per file, resumable with -C -. The engine never uses this
+# path; it exists so a host with neither `hf` nor a usable image can still
+# get the weights.
 _hf_curl_fetch_tree() {
-    local dir="$1" vision="${2:-0}" rc=0 f expected actual
+    local dir="$1" vision="${2:-0}" ck
+    ck="$(selected_checkpoint "${3:-}")"
+    local rc=0 f expected actual
     local table table_rc=0
     table="$(hf_remote_table 2>/dev/null)" || table_rc=$?
 
@@ -483,7 +649,7 @@ _hf_curl_fetch_tree() {
         if [[ -n "$x" ]]; then
             excluded+=("$x")
         fi
-    done < <(hf_download_excludes "$vision")
+    done < <(hf_download_excludes "$vision" "$ck")
 
     local -a names=()
     if [[ -n "$table" ]]; then
@@ -498,7 +664,16 @@ _hf_curl_fetch_tree() {
         else
             warn "HF API unreachable — fetching only the files this repo knows by name."
         fi
-        names=("$HF_CHECKPOINT_FILE" "$HF_OVERLAY_FILE" "$HF_VISION_FILE")
+        names=()
+        local qf
+        while read -r qf; do
+            if [[ -n "$qf" ]]; then
+                names+=("$qf")
+            fi
+        done < <(quant_files "$ck")
+        if [[ "$vision" == "1" ]]; then
+            names+=("$HF_VISION_FILE")
+        fi
     fi
 
     for f in "${names[@]}"; do
@@ -545,7 +720,7 @@ _hf_curl_fetch_tree() {
 # hf_fetch_file <filename> <expected-sha256> <dest-dir>
 # Downloads one small file from the weights repo and verifies its sha256.
 # Uses `hf download` when the CLI is present, then `uvx hf`, then curl with
-# resume (-C -). For small files (the vision sidecar); the ~122 GiB weights
+# resume (-C -). For small files (the vision sidecar); the ~110 GiB weights
 # tree goes through hf_download_models().
 hf_fetch_file() {
     local file="$1" expected="$2" dir="$3"
