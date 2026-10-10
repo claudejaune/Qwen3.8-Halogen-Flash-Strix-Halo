@@ -145,6 +145,28 @@ ask_yes_no() {
     fi
 }
 
+# ask_yes_no_strict <prompt> [y|n] — returns 0 on yes
+# A yes/no prompt that accepts nothing else. ask_yes_no reads any answer
+# that is not "n" as yes, which is fine for a casual prompt and wrong for
+# the engine upgrade: a user who types a version number there means
+# something this script will not do, and silently getting the recommended
+# version reads as consent to their own input. Anything that is not a
+# clear yes or no is rejected and asked again. End of input falls back to
+# the default, so a piped or closed stdin cannot hang the script.
+ask_yes_no_strict() {
+    local prompt="$1" default="${2:-y}" reply
+    while true; do
+        if ! read -rp "$prompt [Y/n]: " reply; then
+            if [[ "$default" == "n" ]]; then return 1; else return 0; fi
+        fi
+        case "${reply//[[:space:]]/}" in
+            ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+            [Nn]|[Nn][Oo])        return 1 ;;
+            *) echo "  Not a yes or a no. Enter answers yes." >&2 ;;
+        esac
+    done
+}
+
 # Load KEY=value pairs from a data file into the environment.
 #
 # The file is treated as pure DATA: values are never evaluated, quoted or

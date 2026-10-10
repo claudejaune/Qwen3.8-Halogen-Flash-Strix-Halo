@@ -149,7 +149,7 @@ else
     echo "  config.env pins:      $HALOGEN_IMAGE"
     echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
     echo ""
-    if ask_yes_no "  Upgrade to v${HALOGEN_RECOMMENDED_IMAGE##*:}?" y; then
+    if ask_yes_no_strict "  Upgrade to v${HALOGEN_RECOMMENDED_IMAGE##*:}?" y; then
         NEW_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
         backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
         HALOGEN_IMAGE="$NEW_IMAGE"
