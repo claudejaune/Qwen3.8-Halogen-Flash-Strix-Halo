@@ -464,10 +464,93 @@ offer_update_flow() {
     fi
 }
 
+# weights_status — every file this quant needs that is not usable, one per
+# line as "<name>|<detail>". Empty means the checkpoint is complete: each
+# file exists and clears its size floor. A file under its floor is what a
+# truncated or interrupted download looks like.
+weights_status() {
+    local f path size floor got
+    while read -r f; do
+        [[ -n "$f" ]] || continue
+        path="$MODELS_DIR/$f"
+        if [[ ! -f "$path" ]]; then
+            printf '%s|missing\n' "$f"
+            continue
+        fi
+        size="$(stat -c '%s' "$path" 2>/dev/null || echo 0)"
+        floor="$(quant_floor_gib "$f")"
+        if (( floor > 0 && size < floor * 1073741824 )); then
+            got="$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1073741824 }')"
+            printf '%s|only %s GiB, expect more than %s GiB\n' "$f" "$got" "$floor"
+        fi
+    done < <(quant_files "$CK_BASE")
+}
+
+# list_weights_problem <name|detail lines> — the not-ready listing, shared
+# by the download offer and the offline path so both read the same way.
+list_weights_problem() {
+    local name detail
+    echo ""
+    echo "  The checkpoint is not ready:"
+    while IFS='|' read -r name detail; do
+        [[ -n "$name" ]] || continue
+        printf '    %-28s %s\n' "$name" "$detail"
+    done <<< "$1"
+}
+
+# offer_weights_download <name|detail lines> — say what is wrong and offer
+# to fetch it. Taking the offer clears any file that is present but wrong,
+# downloads the set, and re-checks it. Declining leaves the deployment
+# unable to run, which is said plainly. READY carries the outcome.
+offer_weights_download() {
+    local details="$1" name detail
+    list_weights_problem "$details"
+    echo ""
+    if ! ask_yes_no "  Download now? (~110 GiB, resumes if interrupted)" y; then
+        READY=0
+        echo ""
+        echo "  Halogen cannot run without the checkpoint."
+        echo "  Run ./refresh.sh again and take the download."
+        return 0
+    fi
+
+    # A file that is present but wrong is removed first, so the download
+    # never resumes onto a bad file.
+    while IFS='|' read -r name detail; do
+        [[ -n "$name" && -f "$MODELS_DIR/$name" ]] && rm -f "$MODELS_DIR/$name"
+    done <<< "$details"
+
+    echo ""
+    if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
+        local still_bad
+        still_bad="$(weights_status)"
+        if [[ -z "$still_bad" ]]; then
+            ok "Checkpoint downloaded."
+            READY=1
+        else
+            READY=0
+            warn "Some files are still not right:"
+            while IFS='|' read -r name detail; do
+                [[ -n "$name" ]] || continue
+                printf '    %-28s %s\n' "$name" "$detail"
+            done <<< "$still_bad"
+            echo "  Run ./refresh.sh again to resume."
+        fi
+    else
+        READY=0
+        warn "The download did not finish. Run ./refresh.sh again to resume."
+    fi
+}
+
 info "Checking the HF repo for the checkpoint's current sha256..."
 REMOTE_CK=""
 CK_PROBE_RC=0
 REMOTE_CK="$(hf_remote_sha256 "$CHECKPOINT")" || CK_PROBE_RC=$?
+
+# What is wrong with the weight files, if anything. One check feeds every
+# branch below, so the listing and the READY flag never disagree.
+WSTATUS="$(weights_status)"
+READY=1
 
 if [[ -n "$REMOTE_CK" ]]; then
     ok "Repo reachable (checkpoint sha256 ${REMOTE_CK:0:12}...)."
@@ -495,14 +578,11 @@ if [[ -n "$REMOTE_CK" ]]; then
         else
             offer_update_flow "$REMOTE_CK"
         fi
-    elif file_usable "$CK_PATH"; then
+    elif [[ -n "$WSTATUS" ]]; then
+        offer_weights_download "$WSTATUS"
+    else
         ok "Checkpoint present and config.env matches the repo."
-        CK_GIB=$(( $(stat -c '%s' "$CK_PATH") / 1073741824 ))
-        CK_MIN_GIB="$(quant_floor_gib "$CK_BASE")"
-        if (( CK_GIB < CK_MIN_GIB )); then
-            warn "The checkpoint is only ${CK_GIB} GiB (expect more than ${CK_MIN_GIB} GiB) —"
-            warn "almost certainly incomplete. Re-download it."
-        elif [[ "$VERIFY" == "true" ]]; then
+        if [[ "$VERIFY" == "true" ]]; then
             if verify_checkpoint "$REMOTE_CK"; then
                 if [[ -z "${CHECKPOINT_SHA256:-}" ]]; then
                     rewrite_config_key CHECKPOINT_SHA256 "$REMOTE_CK" >/dev/null
@@ -510,12 +590,9 @@ if [[ -n "$REMOTE_CK" ]]; then
                     ok "config.env now pins the verified sha256."
                 fi
             else
-                warn "Re-download: delete $CK_PATH and run ./run.sh (resumes from HF)."
+                offer_weights_download "$CK_BASE|checksum mismatch"
             fi
         fi
-    else
-        warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~110 GiB, resumes if interrupted)."
     fi
 else
     # Fall back to what we know locally.
@@ -524,14 +601,14 @@ else
     else
         warn "HF repo unreachable — using the pinned/recorded hash only."
     fi
-    if file_usable "$CK_PATH"; then
+    if [[ -n "$WSTATUS" ]]; then
+        READY=0
+        list_weights_problem "$WSTATUS"
+        echo ""
+        echo "  Halogen cannot run without the checkpoint, and the repo is"
+        echo "  unreachable. Reconnect and run ./refresh.sh again."
+    else
         ok "Checkpoint present: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
-        CK_GIB=$(( $(stat -c '%s' "$CK_PATH") / 1073741824 ))
-        CK_MIN_GIB="$(quant_floor_gib "$CK_BASE")"
-        if (( CK_GIB < CK_MIN_GIB )); then
-            warn "The checkpoint is only ${CK_GIB} GiB (expect more than ${CK_MIN_GIB} GiB) —"
-            warn "almost certainly incomplete. Re-download it."
-        fi
         if [[ "$VERIFY" == "true" ]]; then
             if [[ -n "${CHECKPOINT_SHA256:-}" ]]; then
                 verify_checkpoint "$CHECKPOINT_SHA256" || true
@@ -546,9 +623,6 @@ else
                 fi
             fi
         fi
-    else
-        warn "Checkpoint not found: $CK_PATH"
-        echo "  First ./run.sh downloads it (~110 GiB, resumes if interrupted)."
     fi
 fi
 echo ""
@@ -604,4 +678,10 @@ echo " Refresh finished."
 echo "============================================"
 echo "  Image:      $HALOGEN_IMAGE"
 echo "  Checkpoint: $CK_BASE"
+if [[ "${READY:-1}" == "1" ]]; then
+    echo "  Ready:      yes — ./run.sh"
+else
+    echo "  Ready:      no — the checkpoint is not complete."
+    echo "              Run ./refresh.sh again and take the download."
+fi
 echo "============================================"
