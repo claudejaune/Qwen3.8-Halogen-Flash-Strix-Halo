@@ -510,7 +510,7 @@ offer_weights_download() {
         READY=0
         echo ""
         echo "  Halogen cannot run without the checkpoint."
-        echo "  Run ./refresh.sh again and take the download."
+        echo "  Run ./refresh.sh again and select Yes when prompted to download."
         return 0
     fi
 
@@ -682,6 +682,6 @@ if [[ "${READY:-1}" == "1" ]]; then
     echo "  Ready:      yes — ./run.sh"
 else
     echo "  Ready:      no — the checkpoint is not complete."
-    echo "              Run ./refresh.sh again and take the download."
+    echo "              Run ./refresh.sh again and select Yes when prompted to download."
 fi
 echo "============================================"
