@@ -221,7 +221,7 @@ ok "All required tools are in place."
 # ── Detect hardware / kernel ─────────────────────────────────────────────────
 echo ""
 echo "============================================"
-echo " Qwen3.8-Flash-Next (halogen-flash-server)"
+echo " Qwen3.8-Flash-Next (Halogen Flash server)"
 echo " Interactive Setup"
 echo "============================================"
 echo ""
@@ -569,7 +569,7 @@ if [[ -n "$PRESERVED_API_KEY" ]]; then
         warn "New key created. Apps/agents still using the old key need to be reconfigured."
     fi
 else
-    echo "  Currently no API key is set. Any program can access Halogen without a key or password"
+    echo "  Currently no API key is set. Any program can access Halogen Server without a key or password"
     if ask_yes_no "  Generate an API key? (RECOMMENDED)" y; then
         API_KEY="$(generate_api_key)"
         ok "API key generated."

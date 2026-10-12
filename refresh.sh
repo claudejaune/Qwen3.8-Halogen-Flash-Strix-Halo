@@ -359,7 +359,7 @@ if api_key_present "$CONFIG_FILE"; then
     ok "API key already configured. Not rotating it."
     echo "  To rotate: ./setup.sh, or edit HALOGEN_API_KEY in config.env by hand."
 else
-    echo "  Currently no API key is set. Any program can access Halogen Flash without a key or password"
+    echo "  Currently no API key is set. Any program can access Halogen Server without a key or password"
     if ask_yes_no "  Generate an API key? (RECOMMENDED)" y; then
         NEW_KEY="$(generate_api_key)"
         backup_path="$(rewrite_config_key HALOGEN_API_KEY "$NEW_KEY" "" HALOGEN_IMAGE)"
