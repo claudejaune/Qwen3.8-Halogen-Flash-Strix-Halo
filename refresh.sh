@@ -215,21 +215,16 @@ offer_quant_switch() {
     fi
 
     echo ""
-    warn "This volume runs the deprecated w4b quant."
-    echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
-    echo "  their release testing since 0.16.1. v2 is the current checkpoint:"
-    echo "  one file plus its lookup table, about 110 GiB together."
+    warn "This volume runs the old model (w4b)."
+    echo "  w4b is no longer supported in newer Halogen Flash versions."
     echo ""
-    echo "  Switching to v2:"
-    echo "    stops the server"
-    echo "    deletes the w4b files${size_note}:"
+    echo "  Switching stops Halogen Flash, deletes the old model${size_note}, and downloads v2 (~110 GiB)."
+    echo "  Halogen Flash can't run until the download finishes."
     for f in "${doomed[@]}"; do
-        echo "      $f"
+        echo "    $f"
     done
-    echo "    downloads v2 and its lookup table (~110 GiB, resumable)"
     echo ""
-    echo "  The vision sidecar and the tokenizer are kept — both quants use"
-    echo "  them. Nothing else on disk is touched."
+    echo "  Nothing else is touched: the vision file and tokenizer stay."
     echo ""
     if ! ask_yes_no "  Switch this volume to v2 now? (RECOMMENDED; deletes older quant and downloads new version ~110 GiB)" n; then
         echo "  Keeping w4b for now. Run ./refresh.sh again when ready."
@@ -545,9 +540,7 @@ if [[ -n "$REMOTE_CK" ]]; then
     if [[ -n "${CHECKPOINT_SHA256:-}" && "$CHECKPOINT_SHA256" != "$REMOTE_CK" ]]; then
         # config pins an older hash. Either the disk was never updated, or
         # it already holds the new version and only config is stale.
-        warn "The repo's checkpoint differs from the one pinned in config.env."
-        echo "    pinned:  $CHECKPOINT_SHA256"
-        echo "    current: $REMOTE_CK"
+        warn "A newer model checkpoint is available."
         if [[ "$VERIFY" == "true" ]] && file_usable "$CK_PATH"; then
             if LOCAL="$(hash_checkpoint)"; then
                 if [[ "$LOCAL" == "$REMOTE_CK" ]]; then
@@ -556,7 +549,7 @@ if [[ -n "$REMOTE_CK" ]]; then
                     CHECKPOINT_SHA256="$REMOTE_CK"
                     ok "config.env updated to match."
                 else
-                    warn "Local file matches NEITHER the pinned nor the current hash."
+                    warn "Model file doesn't match any known version."
                     offer_update_flow "$REMOTE_CK"
                 fi
             else
