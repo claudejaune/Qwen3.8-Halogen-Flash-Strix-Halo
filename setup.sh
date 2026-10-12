@@ -23,20 +23,15 @@ require_not_root
 CONFIG_WRITTEN=false
 on_interrupt() {
     echo ""
-    warn "Setup interrupted (Ctrl-C)."
     if [[ "$CONFIG_WRITTEN" == "true" ]]; then
-        warn "Your config was saved to: $CONFIG_FILE"
+        warn "Setup interrupted (Ctrl-C). Config saved to $CONFIG_FILE. Run ./setup.sh to finish."
     elif [[ "${BOOT_HANDLED:-false}" == "true" ]]; then
-        warn "config.env was NOT written — the only change is the bootloader"
-        warn "edit you approved."
+        warn "Setup interrupted (Ctrl-C). Boot change applied, config not saved. Run ./setup.sh to finish."
     else
-        warn "config.env was NOT written — nothing has changed."
+        warn "Setup interrupted (Ctrl-C). Nothing was saved. Run ./setup.sh to finish."
     fi
-    warn "A partially answered setup cannot run the server. Run ./setup.sh again"
-    warn "to complete it (you can keep answering the same answers)."
     if [[ "${MODELS_DIR_PENDING:-false}" == "true" ]]; then
-        warn "Remember: the weights directory (${MODELS_DIR:-<unset>}) must exist"
-        warn "before the server can run."
+        warn "Create the weights directory first: ${MODELS_DIR:-<unset>}"
     fi
     exit 130
 }
@@ -127,16 +122,15 @@ pkg_install_display() {
 require_sudo() {
     have sudo && return 0
     echo ""
-    warn "'sudo' is not installed, and setup.sh needs it to install packages."
+    warn "sudo is not installed. Setup needs it to add packages."
     echo ""
-    echo "  Set it up yourself, then re-run ./setup.sh. On Arch, as root:"
+    echo "  On Arch, run as root:"
     echo ""
     echo "      pacman -S --needed sudo"
     echo "      usermod -aG wheel $TARGET_USER"
-    echo "      visudo -f /etc/sudoers.d/wheel      # and add this one line:"
-    echo "          %wheel ALL=(ALL:ALL) ALL"
+    echo "      visudo -f /etc/sudoers.d/wheel    # add: %wheel ALL=(ALL:ALL) ALL"
     echo ""
-    echo "  Then log out, log back in as $TARGET_USER, and run ./setup.sh again."
+    echo "  Then log out, log back in, and run ./setup.sh again."
     exit 1
 }
 
@@ -162,21 +156,31 @@ require_sudo
 NEEDS_RELOGIN=false
 NEEDS_REBOOT_NOW=false
 
+# join_names <name>... — "a, b, c" for display.
+join_names() {
+    local out="" name
+    for name in "$@"; do
+        out="${out:+$out, }$name"
+    done
+    printf '%s' "$out"
+}
+
 missing_pkgs=()
+missing_names=()
 for entry in "${REQUIRED_TOOLS[@]}"; do
     cmd="${entry%%:*}"
     rest="${entry#*:}"
     pkg="${rest%%:*}"
-    why="${rest#*:}"
     if have "$cmd"; then
         ok "$pkg present"
     else
-        printf '  %-8s missing — %s\n' "$pkg" "$why"
+        missing_names+=("$pkg")
         missing_pkgs+=("$(pkg_for_distro "$pkg")")
     fi
 done
 
 if ((${#missing_pkgs[@]} > 0)); then
+    warn "Not installed: $(join_names "${missing_names[@]}")"
     echo ""
     echo "  Will run: $(pkg_install_display "${missing_pkgs[@]}")"
     if ask_yes_no "  Install these now?" y; then
@@ -196,8 +200,21 @@ for entry in "${REQUIRED_TOOLS[@]}"; do
     fi
 done
 if ((${#still_missing[@]} > 0)); then
-    err "Still missing: ${still_missing[*]}.
-setup.sh needs all of them. Install them and re-run ./setup.sh."
+    still_list="$(join_names "${still_missing[@]}")"
+    case "$OS_ID" in
+        fedora|ubuntu|debian|arch)
+            still_pkgs=()
+            for pkg in "${still_missing[@]}"; do
+                still_pkgs+=("$(pkg_for_distro "$pkg")")
+            done
+            err "Still missing: $still_list. Run ./setup.sh again to retry the install
+        OR install them yourself: $(pkg_install_display "${still_pkgs[@]}")"
+            ;;
+        *)
+            err "Still missing: $still_list. Run ./setup.sh again to retry the install
+        OR install them with your package manager."
+            ;;
+    esac
 fi
 ok "All required tools are in place."
 
@@ -234,21 +251,19 @@ if [[ -z "$GPU_ACCESS_REASON" ]]; then
     ok "Your user can access the GPU devices."
 else
     warn "GPU access check failed: $GPU_ACCESS_REASON"
-    echo "  The engine cannot start without GPU access. The usual cause is group"
-    echo "  membership; AMD's documented fix adds both groups (the -a keeps your"
-    echo "  existing ones):"
+    echo "  Usually fixed by adding you to the render and video groups:"
     echo ""
     echo "    sudo usermod -aG render,video $TARGET_USER"
     echo ""
     if have sudo && ask_yes_no "  Run that now?" y; then
         if sudo usermod -aG render,video "$TARGET_USER"; then
-            ok "Membership updated — it takes effect in a new session."
+            ok "Groups updated. Takes effect in a new session."
             NEEDS_RELOGIN=true
         else
-            err "usermod failed. Run it yourself, then re-run ./setup.sh."
+            err "Couldn't update the groups. Run the command above yourself, then run ./setup.sh again."
         fi
     else
-        err "GPU access is required. Add the groups yourself, then re-run ./setup.sh."
+        err "GPU access is required. Add the groups, then run ./setup.sh again."
     fi
 fi
 echo ""
@@ -288,7 +303,7 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
     # entries where grub2-mkconfig alone does not propagate kernel args.
     if have grubby; then
         BOOT_FAMILY="grubby"
-        BOOT_INSTRUCTIONS="  # Fedora/RHEL-family: grubby updates all entries (BLS + /etc/kernel/cmdline + grub.cfg)
+        BOOT_INSTRUCTIONS="  # Fedora: updates every boot entry
   sudo grubby --update-kernel=ALL --args='$KERNEL_ARGS'"
     elif [[ -d /boot/loader/entries || -f /etc/kernel/cmdline ]]; then
         BOOT_FAMILY="systemd-boot"
@@ -327,8 +342,7 @@ if ((${#MISSING_PARAMS[@]} > 0)); then
                 fi
                 ;;
         esac
-        BOOT_INSTRUCTIONS="  # GRUB (/etc/default/grub): one command appends the missing params and
-  # rebuilds grub.cfg:
+        BOOT_INSTRUCTIONS="  # GRUB: appends the settings and rebuilds grub.cfg:
   sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"$/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_ARGS\"/' /etc/default/grub && $GRUB_REBUILD"
     else
         BOOT_INSTRUCTIONS="  # Add these kernel boot params (method depends on your distro):
@@ -395,9 +409,7 @@ apply_boot_params() {
 
 # The caution belongs with the commands wherever they are shown.
 print_boot_caution() {
-    warn "Adding these params changes your bootloader configuration. The"
-    warn "bootloader starts your machine, so a mistake there can prevent it from"
-    warn "booting. Consult your distro's documentation if you are unsure."
+    warn "This edits your boot loader. A mistake can stop the machine from booting. Consult your distro's documentation if you are unsure."
     echo ""
 }
 
@@ -408,7 +420,7 @@ print_boot_offer() {
     echo ""
     echo "$BOOT_INSTRUCTIONS"
     echo ""
-    echo "  They apply at the next reboot. setup.sh does not reboot for you."
+    echo "  Applies after your next reboot."
     echo ""
 }
 
@@ -421,12 +433,12 @@ print_boot_manual() {
     echo "  sudo reboot"
 }
 
-info "Kernel params: $(( ${#EXPECTED_PARAMS[@]} - ${#MISSING_PARAMS[@]} ))/${#EXPECTED_PARAMS[@]} of the recommended set are active"
+info "GPU settings: $(( ${#EXPECTED_PARAMS[@]} - ${#MISSING_PARAMS[@]} )) of ${#EXPECTED_PARAMS[@]} active"
 if ((${#MISSING_PARAMS[@]} > 0)); then
     warn "Missing from your boot command line: ${MISSING_PARAMS[*]}"
     echo ""
     if boot_params_in_config; then
-        info "They are already written to your bootloader — they apply at the next boot."
+        info "Already in the boot settings. They apply after the next reboot."
         BOOT_HANDLED=true
     elif [[ "$BOOT_FAMILY" == "unknown" ]]; then
         print_boot_manual
@@ -458,8 +470,7 @@ fi
 
 if [[ "$KERNEL_TOO_OLD" == "true" && "$OS_ID" == "ubuntu" ]]; then
     echo ""
-    warn "Kernel $KERNEL_RELEASE is too old — the engine needs 7.0 or newer"
-    warn "(the read-only GPU registration of the checkpoint is refused on 6.x)."
+    warn "Kernel $KERNEL_RELEASE is too old. The engine needs 7.0 or newer."
     echo ""
     echo "  Ubuntu ships 7.0 in the HWE kernel."
     echo "  Will run: sudo apt update && sudo apt install -y linux-generic-hwe-24.04"
@@ -469,18 +480,14 @@ if [[ "$KERNEL_TOO_OLD" == "true" && "$OS_ID" == "ubuntu" ]]; then
             ok "HWE kernel installed."
             NEEDS_REBOOT_NOW=true
         else
-            err "The HWE kernel did not install. Install a 7.0+ kernel yourself,
-then re-run ./setup.sh."
+            err "Kernel install failed. Install 7.0 or newer yourself, then run ./setup.sh again."
         fi
     else
-        err "Setup cannot continue on kernel $KERNEL_RELEASE. Install a 7.0+
-kernel (sudo apt install -y linux-generic-hwe-24.04), reboot into it, then
-re-run ./setup.sh."
+        err "Kernel $KERNEL_RELEASE is too old. Install kernel 7.0+ (sudo apt install -y linux-generic-hwe-24.04),
+reboot, then run ./setup.sh again."
     fi
 elif [[ "$KERNEL_TOO_OLD" == "true" ]]; then
-    err "Kernel $KERNEL_RELEASE is too old. halogen-flash-server needs kernel
-7.0 or newer (the read-only GPU registration of the checkpoint is refused on
-6.x). Boot a newer kernel and re-run ./setup.sh."
+    err "Kernel $KERNEL_RELEASE is too old. Boot kernel 7.0 or newer, then run ./setup.sh again."
 else
     ok "Kernel $KERNEL_RELEASE (7.0+ required)."
 fi
@@ -491,30 +498,28 @@ fi
 if [[ "${NEEDS_REBOOT_NOW}" == "true" || "${NEEDS_RELOGIN}" == "true" ]]; then
     echo ""
     echo "============================================"
-    warn "REBOOT REQUIRED — SETUP PAUSED BEFORE ANY CHANGES"
+    warn "REBOOT REQUIRED"
     echo "============================================"
     echo ""
-    if [[ "${NEEDS_REBOOT_NOW}" == "true" ]]; then
+    if [[ "${NEEDS_REBOOT_NOW}" == "true" && "${NEEDS_RELOGIN}" == "true" ]]; then
+        echo "  Reboot into the new kernel to apply the render and video group changes."
+    elif [[ "${NEEDS_REBOOT_NOW}" == "true" ]]; then
         echo "  Reboot into the new kernel."
-    fi
-    if [[ "${NEEDS_RELOGIN}" == "true" ]]; then
-        echo "  The render and video groups were added to $TARGET_USER; a reboot"
-        echo "  starts a new session where they are in effect."
+    else
+        echo "  Reboot to apply the render and video group changes."
     fi
     if ((${#MISSING_PARAMS[@]} > 0)); then
         echo ""
         if [[ "$BOOT_HANDLED" == "true" ]]; then
-            echo "  The kernel params are written to your bootloader; this reboot"
-            echo "  applies them."
+            echo "  Reboot to apply the boot settings."
         else
-            echo "  Also missing from your boot command line:"
-            echo "      ${MISSING_PARAMS[*]}"
+            echo "  Boot settings still missing: ${MISSING_PARAMS[*]}"
             echo ""
             print_boot_manual
         fi
     fi
     echo ""
-    echo "  Reboot now, then run ./setup.sh again to finish setup."
+    echo "  Reboot, then run ./setup.sh once again."
     echo ""
     exit 0
 fi
@@ -525,8 +530,7 @@ info "=== Step 1: Network binding ==="
 echo "  1) localhost — only accessible on this machine"
 echo "  2) 0.0.0.0  — accessible over the network"
 echo ""
-echo "  A 0.0.0.0 server is reachable by everyone on your network. The next"
-echo "  step offers an API key, which is what makes that safe."
+echo "  Option 2 lets others on your network connect. You'll set an API key next."
 echo ""
 read -rp "Choice [1]: " net_choice || net_choice=""
 net_choice="${net_choice:-1}"
@@ -544,8 +548,7 @@ while true; do
     if (( 10#$PORT >= 1024 && 10#$PORT <= 65535 )); then
         break
     fi
-    echo "  Ports 1-1023 are root ports — this server never uses them." >&2
-    echo "  Choose a port between 1024 and 65535." >&2
+    echo "  Use a port from 1024 to 65535." >&2
 done
 echo ""
 
@@ -557,14 +560,13 @@ echo ""
 info "=== Step 2: Set API key ==="
 if [[ -n "$PRESERVED_API_KEY" ]]; then
     echo "  You already have an API key: ${PRESERVED_API_KEY:0:11}..."
-    echo "  Keeping it means every client and agent you configured keeps working."
+    echo "  Keep it so your apps keep working."
     if ask_yes_no "  Keep the existing API key? (RECOMMENDED)" y; then
         API_KEY="$PRESERVED_API_KEY"
         ok "Keeping your existing API key."
     else
         API_KEY="$(generate_api_key)"
-        warn "New API key generated. Every client still configured with the old"
-        warn "one will get 401 until you update it."
+        warn "New key created. Apps/agents still using the old key need to be reconfigured."
     fi
 else
     echo "  Currently no API key is set. Any program can access Halogen without a key or password"
@@ -596,8 +598,7 @@ echo ""
 
 # ── Step 3: Vision (multimodal) ──────────────────────────────────────────────
 info "=== Step 3: Vision (multimodal) ==="
-echo "  The model reads images when the vision sidecar (0.84 GiB, fetched"
-echo "  beside the weights) is loaded."
+echo "  Lets the model understand images. Adds a 0.84 GiB download."
 echo ""
 echo "  1) Enable vision"
 echo "  2) Disable vision — text only"
@@ -623,9 +624,7 @@ while true; do
             break
         fi
         echo ""
-        warn "More than 8 slots is NOT recommended: past 8 a step takes two"
-        warn "forwards and total throughput stops growing — every stream only"
-        warn "gets slower. Nothing above 8 is faster in total."
+        warn "More than 8 slots is NOT recommended. Above 8, each chat slows down and total speed stops growing."
         if ask_yes_no "  Proceed anyway (NOT recommended)?" n; then
             break
         fi
@@ -649,9 +648,8 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Directory the weights (~110 GiB) are downloaded into on first"
-    echo "  ./run.sh. Press Enter for the default ($THIS_DEFAULT)."
-    echo "  It must be an absolute path."
+    echo "  Folder for the model (about 110 GiB). Press Enter for the default: $THIS_DEFAULT"
+    echo "  It must be an absolute path"
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
     FALLBACK_DEFAULT=false
     # Expand a leading ~ the shell does not expand on read input.
@@ -674,10 +672,10 @@ while true; do
     fi
     MODELS_DIR_PENDING=true
     echo ""
-    echo "  $MODELS_DIR needs to exist for the script to run."
+    echo "  $MODELS_DIR does not exist."
     echo ""
-    echo "  1) Yes, create the directory"
-    echo "  2) Choose a different directory"
+    echo "  1) Create it"
+    echo "  2) Choose another folder"
     echo "  3) Exit setup"
     dir_ok=false
     while true; do
@@ -690,9 +688,8 @@ while true; do
                     MODELS_DIR_PENDING=false
                     dir_ok=true
                 else
-                    warn "Could not create $MODELS_DIR."
-                    warn "The weights directory must exist for the server to run."
-                    err "Exiting setup. Create it yourself and re-run ./setup.sh."
+                    warn "Couldn't create $MODELS_DIR."
+                    err "Exiting setup. Create it yourself, then run ./setup.sh again."
                 fi
                 break
                 ;;
@@ -720,27 +717,24 @@ done
 # disk-space requirement). Written into config.env so refresh.sh can tell
 # "damaged file" from "upstream shipped a new version". Best effort: an
 # offline setup leaves it unset (commented) and everything still works.
-info "Checking the HF repo for the checkpoint's current sha256..."
+info "Checking for the latest model version..."
 REMOTE_CK_SHA=""
 if REMOTE_CK_SHA="$(hf_remote_sha256 "$CHECKPOINT_FILE")"; then
-    ok "Repo lists the checkpoint (sha256 ${REMOTE_CK_SHA:0:12}...)."
+    ok "Latest model version found."
 else
     # Exit 2 means curl or python3 is missing, not that the repo is offline.
     case "$?" in
-        2) warn "Reading the repo's file list needs python3. Install it and re-run ./setup.sh to pin the checkpoint's sha256." ;;
-        *) warn "Could not fetch the repo's sha256 (offline?). Skipping integrity pinning." ;;
+        2) warn "Needs python3 to check the model version. Install it, then run ./setup.sh again." ;;
+        *) warn "Couldn't check the model version (offline?)." ;;
     esac
     REMOTE_CK_SHA=""
 fi
 if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
     REMOTE_VISION_SHA=""
     if REMOTE_VISION_SHA="$(hf_remote_sha256 "$VISION_FILE")"; then
-        ok "Repo lists the vision sidecar (sha256 ${REMOTE_VISION_SHA:0:12}...)."
+        ok "Vision file version found."
     else
-        case "$?" in
-            2) warn "Reading the repo's file list needs python3. The sidecar is checked at download time." ;;
-            *) warn "Could not fetch the vision sidecar's sha256. It will be checked at download time." ;;
-        esac
+        warn "Couldn't check the vision file version. It will be checked after download."
         REMOTE_VISION_SHA=""
     fi
 fi
@@ -758,17 +752,16 @@ size_gib() {
 }
 
 if [[ -f "$CK_PATH" ]]; then
-    echo "  A checkpoint already exists: $CK_PATH ($(du -sh "$CK_PATH" | cut -f1))"
     CK_GIB="$(size_gib "$CK_PATH")"
     CK_MIN_GIB="$(quant_floor_gib "$CHECKPOINT_FILE")"
     if (( CK_GIB >= CK_MIN_GIB )); then
-        info "The file is ~${CK_GIB} GiB — treated as present (size only)."
+        info "Model found (~${CK_GIB} GiB). It looks complete."
         CK_NEEDS_DOWNLOAD=false
     else
-        warn "The file is only ~${CK_GIB} GiB (expect more than ${CK_MIN_GIB}) — incomplete."
+        warn "Model is incomplete (${CK_GIB} GiB of ${CK_MIN_GIB}). ./setup.sh will offer to finish it."
     fi
 else
-    info "No ${CHECKPOINT_FILE} on disk yet."
+    info "Model not downloaded yet."
 fi
 echo ""
 
@@ -786,20 +779,15 @@ if [[ -f "$LEGACY_CK_PATH" ]]; then
         | awk 'END { print $1 }')"
     if v2_installed "$MODELS_DIR"; then
         BOTH_QUANTS=1
-        warn "This volume holds both quants. v2 is installed and is what the server runs."
-        echo "  w4b is deprecated upstream at engine 0.16.2 and now sits here"
-        echo "  unused. Deleting it reclaims the space; keeping it is fine and"
-        echo "  setup leaves it alone."
+        warn "Both model versions are on disk. The server uses v2."
+        echo "  The old model (w4b) is unused. Deleting it frees space."
         echo ""
         LEGACY_PROMPT="  Delete the w4b files to reclaim ~${LEGACY_TOTAL:-that space}?"
     else
         BOTH_QUANTS=0
-        warn "This volume still holds the deprecated w4b quant: $LEGACY_CK_PATH"
-        echo "  w4b was deprecated upstream at engine 0.16.2 and has been outside"
-        echo "  their release testing since 0.16.1. v2 is the current checkpoint."
-        echo ""
-        echo "  Deleting the w4b files frees ~${LEGACY_TOTAL:-space} for the v2 download."
-        echo "  The vision sidecar and the tokenizer are kept — both quants use them."
+        warn "The old model (w4b) is on disk: $LEGACY_CK_PATH"
+        echo "  v2 is the current model. Deleting w4b frees ~${LEGACY_TOTAL:-space} for the v2 download."
+        echo "  The vision file and tokenizer stay."
         echo ""
         LEGACY_PROMPT="  Delete the w4b files now?"
     fi
@@ -810,12 +798,11 @@ if [[ -f "$LEGACY_CK_PATH" ]]; then
                 rm -f "$MODELS_DIR/$legacy_f"
             fi
         done
-        ok "w4b removed."
+        ok "Old model (w4b) deleted."
     elif (( BOTH_QUANTS == 1 )); then
-        ok "Keeping w4b beside v2. The server runs v2."
+        ok "Keeping the old model (w4b). The server uses v2."
     else
-        warn "Keeping w4b. Setup still installs v2 beside it, which needs the"
-        warn "space for both. ./refresh.sh offers this switch again later."
+        warn "Keeping w4b. v2 needs space for both. ./refresh.sh can switch later."
     fi
     echo ""
 fi
@@ -827,12 +814,10 @@ if [[ "$CK_NEEDS_DOWNLOAD" == "true" ]]; then
     if [[ -z "$avail" ]]; then
         warn "Could not check free disk space for $MODELS_DIR."
     elif (( avail < DISK_MIN_GIB )); then
-        err "Only ${avail} GiB free on the disk that holds $MODELS_DIR. The first
-./run.sh downloads the weights and sidecars (~110 GiB in all); setup needs at
-least ${DISK_MIN_GIB} GiB free. Free some space and re-run ./setup.sh."
+        err "Only ${avail} GiB free. Setup needs ${DISK_MIN_GIB} GiB. Free some space, then run ./setup.sh again."
     fi
 else
-    ok "Checkpoint already in place — no download needed, disk-space check skipped."
+    ok "Model already in place. No download needed."
 fi
 
 # ── Write config ─────────────────────────────────────────────────────────────
@@ -852,8 +837,7 @@ fi
 umask 077
 cat > "$CONFIG_FILE" <<CONFIG_EOF
 # config.env — Generated by setup.sh on $(date -Iseconds)
-# Plain KEY=value data — safe to edit by hand, never executed as code.
-# Full-line comments only. Re-running setup.sh overwrites this file.
+# Edit values here. Running setup.sh overwrites this file.
 
 # Server
 BIND_HOST=$BIND_HOST
@@ -867,8 +851,7 @@ HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_CHECKPOINT=/models/$CHECKPOINT_FILE
 $API_KEY_LINE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
-# Reasoning effort for requests that send none. Unset = the model's own
-# default (xhigh, recommended by the model card). Uncomment to change:
+# Reasoning effort (default: xhigh). Uncomment to change:
 # HALOGEN_REASONING_EFFORT=medium
 CONFIG_EOF
 )
@@ -883,7 +866,7 @@ fi
 if [[ -n "$REMOTE_CK_SHA" ]]; then
     echo "CHECKPOINT_SHA256=$REMOTE_CK_SHA" >> "$CONFIG_FILE"
 else
-    echo "# CHECKPOINT_SHA256=   # (offline during setup; ./refresh.sh can fill this in)" >> "$CONFIG_FILE"
+    echo "# CHECKPOINT_SHA256=   # (set by ./refresh.sh when online)" >> "$CONFIG_FILE"
 fi
 if [[ "$HALOGEN_VISION_TOWER" == "1" && -n "$REMOTE_VISION_SHA" ]]; then
     echo "VISION_SHA256=$REMOTE_VISION_SHA" >> "$CONFIG_FILE"
@@ -913,7 +896,7 @@ else
             warn "Image pull failed. run.sh will pull on first start."
         fi
     else
-        echo "  Left for first ./run.sh (it pulls automatically)."
+        echo "  Skipped. ./run.sh downloads it on first start."
     fi
 fi
 echo ""
@@ -954,8 +937,7 @@ else
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
-            warn "Only ${avail} GiB free on the disk that holds $MODELS_DIR."
-            warn "Skipping the download. Free space and re-run ./setup.sh."
+            warn "Only ${avail} GiB free. Free some space, then run ./setup.sh again."
         else
             if hf_download_models "$MODELS_DIR" "$DEFAULT_IMAGE" "$VISION_FLAG" "$CHECKPOINT_FILE"; then
                 ok "Download finished."
@@ -963,24 +945,23 @@ else
                 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" remote "$CHECKPOINT_FILE" 2>/dev/null)" || WEIGHTS_RC=$?
                 if (( WEIGHTS_RC == 0 )); then
                     WEIGHTS_READY=true
-                    ok "Weights verified: every file is present at the expected size."
+                    ok "Model downloaded."
                 else
-                    warn "Some files are still missing or the wrong size:"
+                    warn "Model is incomplete:"
                     while read -r st file detail; do
                         case "$st" in
                             missing)    echo "    missing:    $file" ;;
                             incomplete) echo "    incomplete: $file ($detail)" ;;
                         esac
                     done <<<"$WEIGHTS_STATUS"
-                    warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
+                    warn "Run ./setup.sh again to resume."
                 fi
             else
-                warn "The weights download did not finish."
-                warn "Re-run ./setup.sh or ./run.sh — the transfer resumes."
+                warn "Download didn't finish. Run ./setup.sh again to resume."
             fi
         fi
     else
-        warn "Skipped. ./run.sh downloads the weights on first start."
+        warn "Skipped. ./run.sh downloads the model on first start."
     fi
 fi
 echo ""
@@ -991,28 +972,28 @@ echo ""
 if [[ "$HALOGEN_VISION_TOWER" == "1" ]]; then
     info "=== Fetch phase: vision sidecar ==="
     if [[ -f "$MODELS_DIR/$VISION_FILE" ]]; then
-        ok "Vision sidecar already present: $MODELS_DIR/$VISION_FILE"
+        ok "Vision file already present: $MODELS_DIR/$VISION_FILE"
         if [[ -n "$REMOTE_VISION_SHA" ]]; then
             EXISTING_SHA="$(sha256sum "$MODELS_DIR/$VISION_FILE" 2>/dev/null | cut -d' ' -f1)"
             if [[ "$EXISTING_SHA" != "$REMOTE_VISION_SHA" ]]; then
-                warn "The sidecar on disk does not match the repo's current sha256."
+                warn "Vision file is out of date."
                 if ask_yes_no "  Re-download it?" y; then
                     hf_fetch_file "$VISION_FILE" "$REMOTE_VISION_SHA" "$MODELS_DIR" || true
                 fi
             else
-                ok "Vision sidecar matches the repo."
+                ok "Vision file is up to date."
             fi
         fi
     elif [[ -n "$REMOTE_VISION_SHA" ]]; then
-        if ask_yes_no "  Download the vision sidecar now (0.84 GiB, verified)?" y; then
+        if ask_yes_no "  Download the vision file now (0.84 GiB)?" y; then
             hf_fetch_file "$VISION_FILE" "$REMOTE_VISION_SHA" "$MODELS_DIR" || \
-                warn "Vision sidecar download failed. Re-run ./setup.sh or ./refresh.sh later."
+                warn "Vision file download failed. Run ./setup.sh again."
         else
-            warn "Vision is ON but the sidecar is missing — the server will refuse to start with images enabled."
+            warn "Vision is on, but its file is missing. The server won't start with images enabled."
         fi
     else
-        warn "Vision is ON but the sidecar is not on disk and the repo was unreachable."
-        echo "  Fetch it before starting: hf download $HF_REPO_ID $VISION_FILE --local-dir $MODELS_DIR"
+        warn "Vision file missing (offline). Fetch it before starting:"
+        echo "  hf download $HF_REPO_ID $VISION_FILE --local-dir $MODELS_DIR"
     fi
     echo ""
 fi
@@ -1034,12 +1015,10 @@ echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo of
 echo "  Bind:       $BIND_HOST:$PORT"
 if [[ -n "$API_KEY" ]]; then
 echo "  API key:    $API_KEY"
-echo "  Clients send it as   Authorization: Bearer $API_KEY"
-echo "                   or  x-api-key: $API_KEY"
+echo "  Send it as Authorization: Bearer $API_KEY (or x-api-key: $API_KEY)."
 elif [[ "$BIND_HOST" != "127.0.0.1" ]]; then
 echo ""
-echo "  WARNING: no API key on a network-bound server. Anyone on your"
-echo "  network can use it. ./refresh.sh offers to add one."
+echo "  WARNING: no API key. Anyone on your network can use it. Add one with ./refresh.sh."
 fi
 echo ""
 echo "  Start:      ./run.sh"
@@ -1047,11 +1026,9 @@ echo "  Stop:       ./stop.sh"
 echo "  Update:     ./refresh.sh   (after git pull)"
 echo ""
 if [[ "$WEIGHTS_READY" == "true" ]]; then
-echo "  The weights are in place; ./run.sh loads them (minutes on the first"
-echo "  start). Watch its output for progress."
+echo "  Start the server with ./run.sh. The first start takes a few minutes."
 else
-echo "  First start downloads the weights (~110 GiB, resumes if interrupted)"
-echo "  and then takes minutes to load them. Watch ./run.sh's output."
+echo "  ./run.sh downloads the model (~110 GiB) on first start, then loads it."
 fi
 echo ""
 
