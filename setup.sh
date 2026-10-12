@@ -823,6 +823,17 @@ fi
 # ── Write config ─────────────────────────────────────────────────────────────
 info "=== Writing config ==="
 
+# Back up the current settings before they are overwritten. The backup keeps
+# the API key, so the folder is private, like the one lib/common.sh uses.
+if [[ -f "$CONFIG_FILE" ]]; then
+    CONFIG_BACKUP_DIR="$SCRIPT_DIR/backups"
+    mkdir -p "$CONFIG_BACKUP_DIR"
+    chmod 700 "$CONFIG_BACKUP_DIR" 2>/dev/null || true
+    CONFIG_BACKUP="$CONFIG_BACKUP_DIR/config.env-$(date +%Y-%m-%d-%H-%M-%S)"
+    cp -a "$CONFIG_FILE" "$CONFIG_BACKUP"
+    ok "Previous settings saved to: $CONFIG_BACKUP"
+fi
+
 # The key line is written only when a key exists. The engine refuses to
 # start on HALOGEN_API_KEY set to an empty value, so a declined key is
 # written as a commented placeholder rather than an empty assignment.
@@ -1000,7 +1011,11 @@ fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo "============================================"
+if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo " Setup complete!"
+else
+echo " Setup complete. The model is not downloaded."
+fi
 echo "============================================"
 echo ""
 echo "  Image:      $DEFAULT_IMAGE"
@@ -1008,7 +1023,7 @@ echo "  Checkpoint: $CHECKPOINT_FILE"
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Weights:    $MODELS_DIR (ready)"
 else
-echo "  Weights:    $MODELS_DIR (downloaded on first run, ~110 GiB)"
+echo "  Weights:    $MODELS_DIR (not downloaded)"
 fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
@@ -1028,7 +1043,7 @@ echo ""
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Start the server with ./run.sh. The first start takes a few minutes."
 else
-echo "  ./run.sh downloads the model (~110 GiB) on first start, then loads it."
+echo "  Run ./run.sh to download the model (~110 GiB)."
 fi
 echo ""
 

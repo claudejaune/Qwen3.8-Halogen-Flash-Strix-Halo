@@ -535,7 +535,7 @@ WSTATUS="$(weights_status)"
 READY=1
 
 if [[ -n "$REMOTE_CK" ]]; then
-    ok "New model version found."
+    ok "Latest model version found."
 
     if [[ -n "${CHECKPOINT_SHA256:-}" && "$CHECKPOINT_SHA256" != "$REMOTE_CK" ]]; then
         # config pins an older hash. Either the disk was never updated, or
