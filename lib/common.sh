@@ -178,7 +178,7 @@ ask_yes_no_strict() {
 _load_kv_file() {
     local file="$1" line key value lineno=0
     if [[ ! -r "$file" ]]; then
-        echo "Error: config file not found or unreadable: $file" >&2
+        echo "Error: config file not found: $file" >&2
         return 1
     fi
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -200,8 +200,7 @@ _load_kv_file() {
             return 1
         fi
         if ! config_key_allowed "$key"; then
-            echo "Error: $file:$lineno — unknown config key: $key" >&2
-            echo "Allowed keys are listed in CONFIG_ALLOWED_KEYS in lib/common.sh." >&2
+            echo "Error: unknown setting on line $lineno: $key. Remove it, or run ./setup.sh." >&2
             return 1
         fi
         # A key already set in the environment wins over the config file:
@@ -452,7 +451,7 @@ checkpoint_host_path() {
         printf '%s/%s\n' "$dir" "$rel"
         return 0
     fi
-    warn "HALOGEN_CHECKPOINT=$cp is outside the container's /models volume; checking $dir/$(basename "$cp") instead."
+    warn "HALOGEN_CHECKPOINT is outside the model folder. Checking $(basename "$cp") in $dir instead."
     printf '%s/%s\n' "$dir" "$(basename "$cp")"
 }
 
@@ -722,7 +721,7 @@ hf_download_models() {
         return $?
     fi
 
-    warn "No downloader available: install 'hf' or 'uv', pull $image, or install curl."
+    warn "No download tool found. Install uv or curl, then try again."
     return 1
 }
 
@@ -756,9 +755,9 @@ _hf_curl_fetch_tree() {
         done <<<"$table"
     else
         if (( table_rc == 2 )); then
-            warn "python3 is missing — fetching only the files this repo knows by name."
+            warn "python3 is missing. Fetching the known files only."
         else
-            warn "HF API unreachable — fetching only the files this repo knows by name."
+            warn "Offline. Fetching the known files only."
         fi
         names=()
         local qf
@@ -860,7 +859,7 @@ hf_fetch_file() {
                 return 1
             fi
         else
-            warn "No downloader found ('hf', 'uvx' or 'curl') — cannot download $file."
+            warn "Can't download $file. Install curl, hf, or uvx, then try again."
             return 1
         fi
     fi

@@ -38,7 +38,7 @@ while (( $# )); do
     case "$1" in
         --image)
             if [[ -z "${2:-}" ]]; then
-                err "--image needs a value: a tag such as 0.17.4, or a full image reference."
+                err "--image needs a version, such as 0.17.4."
             fi
             IMAGE_OVERRIDE="$2"
             shift 2
@@ -48,7 +48,7 @@ while (( $# )); do
             shift
             ;;
         *)
-            echo "Error: unknown option: $1 (usage: ./refresh.sh [--image <tag>] [--verify])" >&2
+            echo "Unknown option: $1. Usage: ./refresh.sh [--image <version>] [--verify]" >&2
             exit 1
             ;;
     esac
@@ -67,10 +67,8 @@ fi
 
 echo ""
 echo "============================================"
-echo " halogen-flash-server — refresh"
+echo " Halogen Flash — refresh"
 echo "============================================"
-echo ""
-echo "  Run this after:  git pull"
 echo ""
 
 if [[ -z "${HALOGEN_IMAGE:-}" ]]; then
@@ -82,7 +80,7 @@ fi
 # with, so refresh stops it first. Everything below then lands on a stopped
 # server, and nothing has to work out what is still live.
 if have podman && podman_container_running "$CONTAINER_NAME"; then
-    if ! ask_yes_no "  A Halogen Server instance is currently running. Stop it? (Required for updating)" y; then
+    if ! ask_yes_no "  Halogen Flash is running. Stop it to update?" y; then
         echo ""
         echo "  Refresh needs the server stopped. Run ./stop.sh, then ./refresh.sh again."
         exit 1
@@ -160,8 +158,7 @@ if [[ -n "$IMAGE_OVERRIDE" ]]; then
 elif [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
     ok "config.env is on the recommended version: $(version_label "$HALOGEN_IMAGE")."
 else
-    echo "  config.env pins:      $HALOGEN_IMAGE"
-    echo "  This repo recommends: $HALOGEN_RECOMMENDED_IMAGE"
+    echo "  config.env pins $(version_label "$HALOGEN_IMAGE"), but $(version_label "$HALOGEN_RECOMMENDED_IMAGE") is available"
     echo ""
     if ask_yes_no_strict "  Upgrade to $(version_label "$HALOGEN_RECOMMENDED_IMAGE")?" y; then
         NEW_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
@@ -170,7 +167,7 @@ else
         ok "config.env updated to $HALOGEN_IMAGE."
         ok "Backup saved as: $backup_path"
     else
-        ok "Staying on $HALOGEN_IMAGE."
+        ok "Keeping $(version_label "$HALOGEN_IMAGE")."
     fi
 fi
 
@@ -235,9 +232,7 @@ offer_quant_switch() {
     echo "  them. Nothing else on disk is touched."
     echo ""
     if ! ask_yes_no "  Switch this volume to v2 now? (RECOMMENDED; deletes older quant and downloads new version ~110 GiB)" n; then
-        echo "  Stayed on w4b. Nothing was deleted or downloaded."
-        echo "  Run this again when ready, or switch by hand:"
-        echo "    hf download $HF_REPO_ID $HF_CHECKPOINT_FILE $HF_NGRAM_FILE --local-dir $MODELS_DIR"
+        echo "  Keeping w4b for now. Run ./refresh.sh again when ready."
         return 0
     fi
 
@@ -248,29 +243,27 @@ offer_quant_switch() {
     local backup_path
     backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE" "" HALOGEN_IMAGE)"
     HALOGEN_CHECKPOINT="/models/$HF_CHECKPOINT_FILE"
-    ok "config.env now selects v2 (backup: $backup_path)"
+    ok "Switched model to v2. Backup: $backup_path"
     rewrite_config_key CHECKPOINT_SHA256 "$new_sha" >/dev/null
     CHECKPOINT_SHA256="$new_sha"
-    ok "config.env pinned to v2's sha256 (${new_sha:0:12}...)."
 
     stop_and_delete "${doomed[@]}"
-    ok "Old quant removed."
+    ok "Old model deleted."
 
     CK_BASE="$HF_CHECKPOINT_FILE"
     CK_PATH="$MODELS_DIR/$CK_BASE"
 
     echo ""
-    info "Downloading v2 and its lookup table (~110 GiB, resumable)..."
+    info "Downloading v2 (~110 GiB, resumes if interrupted)..."
     if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
         local rc=0
         weights_check "$MODELS_DIR" "$VISION_FLAG" remote "$CK_BASE" >/dev/null 2>&1 || rc=$?
         if (( rc == 0 )); then
-            ok "v2 is in place and verified at the expected size."
+            ok "v2 is ready."
             echo ""
             echo "  Start it with ./run.sh"
         else
-            warn "The download finished but the size check still reports a problem."
-            warn "Re-run ./refresh.sh or ./run.sh — the transfer resumes."
+            warn "v2 is still incomplete. Run ./refresh.sh to resume."
         fi
     else
         warn "The download did not finish."
@@ -298,7 +291,7 @@ offer_v2_repoint() {
     echo ""
     echo "  Left on disk: $kept"
     echo ""
-    if ask_yes_no "  Point the config at v2 and keep w4b on disk?" y; then
+    if ask_yes_no "  Switch to v2? (Keeps the old model on disk.)" y; then
         local backup_path
         backup_path="$(rewrite_config_key HALOGEN_CHECKPOINT "/models/$HF_CHECKPOINT_FILE" "" HALOGEN_IMAGE)"
         HALOGEN_CHECKPOINT="/models/$HF_CHECKPOINT_FILE"
@@ -330,7 +323,7 @@ offer_v2_repoint() {
 
 info "=== Quant ==="
 if ! image_tag_ge "$HALOGEN_IMAGE" "$V2_MIN_IMAGE"; then
-    ok "Pinned engine $HALOGEN_IMAGE predates the v2 checkpoint; staying on w4b."
+    ok "Halogen Flash $(version_label "$HALOGEN_IMAGE") is too old for the new Qwen 3.8 Flash model (v2). Keeping w4b."
 elif [[ ! -f "$MODELS_DIR/$HF_LEGACY_CHECKPOINT_FILE" ]]; then
     ok "No legacy w4b checkpoint in $MODELS_DIR."
 elif v2_installed "$MODELS_DIR"; then
@@ -351,11 +344,10 @@ else
     V2_REMOTE_SHA="$(hf_remote_sha256 "$HF_CHECKPOINT_FILE" 2>/dev/null)" || V2_SHA_RC=$?
     if [[ -z "$V2_REMOTE_SHA" ]]; then
         if (( V2_SHA_RC == 2 )); then
-            warn "Reading the repo's file list needs python3 — cannot switch to v2."
+            warn "Can't switch to v2: python3 is missing."
         else
-            warn "The weights repo is unreachable — cannot switch to v2."
+            warn "Can't reach the download server. Run ./refresh.sh when online."
         fi
-        warn "Nothing was deleted. Re-run ./refresh.sh when you are online."
     else
         offer_quant_switch "$V2_REMOTE_SHA"
     fi
@@ -372,24 +364,22 @@ if api_key_present "$CONFIG_FILE"; then
     ok "API key already configured. Not rotating it."
     echo "  To rotate: ./setup.sh, or edit HALOGEN_API_KEY in config.env by hand."
 else
-    echo "  Currently no API key is set. Any program can access Halogen without a key or password"
+    echo "  Currently no API key is set. Any program can access Halogen Flash without a key or password"
     if ask_yes_no "  Generate an API key? (RECOMMENDED)" y; then
         NEW_KEY="$(generate_api_key)"
         backup_path="$(rewrite_config_key HALOGEN_API_KEY "$NEW_KEY" "" HALOGEN_IMAGE)"
         HALOGEN_API_KEY="$NEW_KEY"
         ok "API key added: $NEW_KEY"
         ok "config.env updated (backup: $backup_path)"
-        echo ""
-        echo "  Clients send it as   Authorization: Bearer $NEW_KEY"
-        echo "                   or  x-api-key: $NEW_KEY"
+        echo "  Send it as Authorization: Bearer $NEW_KEY (or x-api-key: $NEW_KEY)"
     else
-        warn "No API key set. Anyone who can reach the port can use this server."
+        warn "No API key. Anyone who can reach this server can use it."
     fi
 fi
 echo ""
 
 # ── Weights ──────────────────────────────────────────────────────────────────
-info "=== Weights ==="
+info "=== Model Weights ==="
 CK_OVERLAY="$CK_PATH.overlay.hgn"
 VISION_PATH="$MODELS_DIR/$VISION_FILE"
 CHECKPOINT="$CK_BASE"
@@ -397,7 +387,7 @@ CHECKPOINT="$CK_BASE"
 # sha256 of a ~62 GiB file takes a few minutes on NVMe; every prompt asks
 # before running one.
 hash_checkpoint() {
-    info "Computing sha256 of $CHECKPOINT (a few minutes on NVMe)..."
+    info "Checking the model file (takes a few minutes)..."
     local h
     h="$(sha256sum "$CK_PATH")" || return 1
     printf '%s\n' "${h%% *}"
@@ -430,15 +420,13 @@ offer_update_flow() {
         fi
     done < <(quant_files_on_disk "$CK_BASE")
 
-    echo "  To update: the server is stopped, ONLY these files are deleted —"
+    echo "  A newer model is available. Updating stops Halogen Flash and deletes the current model:"
     for f in "${doomed[@]}"; do
         echo "    $f"
     done
-    echo "  — and the current ones are re-downloaded (~110 GiB, resumable)."
-    echo "  Other files (tokenizer, vision sidecar, any other models) are"
-    echo "  left alone."
-    if ! ask_yes_no "  Stop the server and delete them now?" n; then
-        echo "  Kept. Nothing deleted. Re-run ./refresh.sh when ready, or delete by hand."
+    echo "  Halogen Flash can't run until the new model (~110 GiB) finishes downloading."
+    if ! ask_yes_no "  Update now?" n; then
+        echo "  Keeping the current model (nothing deleted or downloaded). Run ./refresh.sh to update later."
         return 0
     fi
 
@@ -481,7 +469,7 @@ weights_status() {
         floor="$(quant_floor_gib "$f")"
         if (( floor > 0 && size < floor * 1073741824 )); then
             got="$(awk -v b="$size" 'BEGIN { printf "%.1f", b / 1073741824 }')"
-            printf '%s|only %s GiB, expect more than %s GiB\n' "$f" "$got" "$floor"
+            printf '%s|%s GiB of %s GiB\n' "$f" "$got" "$floor"
         fi
     done < <(quant_files "$CK_BASE")
 }
@@ -491,7 +479,7 @@ weights_status() {
 list_weights_problem() {
     local name detail
     echo ""
-    echo "  The checkpoint is not ready:"
+    echo "  Model download is incomplete:"
     while IFS='|' read -r name detail; do
         [[ -n "$name" ]] || continue
         printf '    %-28s %s\n' "$name" "$detail"
@@ -509,8 +497,7 @@ offer_weights_download() {
     if ! ask_yes_no "  Download now? (~110 GiB, resumes if interrupted)" y; then
         READY=0
         echo ""
-        echo "  Halogen cannot run without the checkpoint."
-        echo "  Run ./refresh.sh again and select Yes when prompted to download."
+        echo "  Halogen Flash can't run without the model. Run ./refresh.sh again to download it."
         return 0
     fi
 
@@ -538,11 +525,11 @@ offer_weights_download() {
         fi
     else
         READY=0
-        warn "The download did not finish. Run ./refresh.sh again to resume."
+        warn "Download didn't finish. Run ./refresh.sh again to resume."
     fi
 }
 
-info "Checking the HF repo for the checkpoint's current sha256..."
+info "Checking for the latest model version..."
 REMOTE_CK=""
 CK_PROBE_RC=0
 REMOTE_CK="$(hf_remote_sha256 "$CHECKPOINT")" || CK_PROBE_RC=$?
@@ -553,7 +540,7 @@ WSTATUS="$(weights_status)"
 READY=1
 
 if [[ -n "$REMOTE_CK" ]]; then
-    ok "Repo reachable (checkpoint sha256 ${REMOTE_CK:0:12}...)."
+    ok "New model version found."
 
     if [[ -n "${CHECKPOINT_SHA256:-}" && "$CHECKPOINT_SHA256" != "$REMOTE_CK" ]]; then
         # config pins an older hash. Either the disk was never updated, or
@@ -564,10 +551,10 @@ if [[ -n "$REMOTE_CK" ]]; then
         if [[ "$VERIFY" == "true" ]] && file_usable "$CK_PATH"; then
             if LOCAL="$(hash_checkpoint)"; then
                 if [[ "$LOCAL" == "$REMOTE_CK" ]]; then
-                    ok "Local file IS the new version — only config.env was stale."
+                    ok "Model is already the latest version."
                     rewrite_config_key CHECKPOINT_SHA256 "$REMOTE_CK" >/dev/null
                     CHECKPOINT_SHA256="$REMOTE_CK"
-                    ok "config.env updated to the current sha256."
+                    ok "config.env updated to match."
                 else
                     warn "Local file matches NEITHER the pinned nor the current hash."
                     offer_update_flow "$REMOTE_CK"
@@ -590,7 +577,7 @@ if [[ -n "$REMOTE_CK" ]]; then
                     ok "config.env now pins the verified sha256."
                 fi
             else
-                offer_weights_download "$CK_BASE|checksum mismatch"
+                offer_weights_download "$CK_BASE|damaged"
             fi
         fi
     fi
@@ -631,7 +618,7 @@ echo ""
 # The engine never fetches it; without it (and HALOGEN_VISION_TOWER=1) the
 # server refuses to start. Keep it present, current, and verified.
 if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
-    info "=== Vision sidecar ==="
+    info "=== Vision support ==="
     REMOTE_VISION=""
     VISION_PROBE_RC=0
     REMOTE_VISION="$(hf_remote_sha256 "$VISION_FILE")" || VISION_PROBE_RC=$?
@@ -642,32 +629,31 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     fi
     if [[ ! -f "$VISION_PATH" ]]; then
         if [[ -n "$REMOTE_VISION" ]]; then
-            if ask_yes_no "  Vision sidecar is missing. Download it now (0.84 GiB, verified)?" y; then
+            if ask_yes_no "  Vision file is missing. Download it now (0.84 GiB)?" y; then
                 hf_fetch_file "$VISION_FILE" "$REMOTE_VISION" "$MODELS_DIR" || true
             else
-                warn "Skipped. The server will refuse to start with images enabled until it exists."
+                warn "Skipped. The server won't start with images enabled until the file exists."
             fi
         else
-            warn "Vision sidecar missing and $VISION_PROBE_WHY. The server will"
-            warn "refuse to start with images enabled. Fetch it later:"
+            warn "Vision file missing ($VISION_PROBE_WHY). The server won't start with images enabled. Fetch it later:"
             echo "  hf download $HF_REPO_ID $VISION_FILE --local-dir $MODELS_DIR"
         fi
     elif [[ -n "$REMOTE_VISION" ]]; then
         LOCAL_VISION="$(sha256sum "$VISION_PATH" 2>/dev/null | cut -d' ' -f1)"
         if [[ "$LOCAL_VISION" != "$REMOTE_VISION" ]]; then
-            warn "Vision sidecar differs from the repo's current sha256."
-            if ask_yes_no "  Re-download it (0.84 GiB)?" y; then
+            warn "Vision file is out of date."
+            if ask_yes_no "  Download the update (0.84 GiB)?" y; then
                 hf_fetch_file "$VISION_FILE" "$REMOTE_VISION" "$MODELS_DIR" || true
             fi
         elif [[ "${VISION_SHA256:-}" != "$REMOTE_VISION" ]]; then
             rewrite_config_key VISION_SHA256 "$REMOTE_VISION" >/dev/null
             VISION_SHA256="$REMOTE_VISION"
-            ok "Vision sidecar current; config.env's VISION_SHA256 refreshed."
+            ok "Vision file current; config.env's VISION_SHA256 refreshed."
         else
-            ok "Vision sidecar present and current."
+            ok "Vision file present and current."
         fi
     else
-        ok "Vision sidecar present ($VISION_PROBE_WHY, hash unchecked)."
+        ok "Vision file present ($VISION_PROBE_WHY, hash unchecked)."
     fi
     echo ""
 fi

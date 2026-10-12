@@ -28,6 +28,6 @@ if ! podman ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; t
     exit 0
 fi
 
-echo "Stopping '$CONTAINER_NAME' (grace period ${GRACE}s for the disk cache flush) ..."
+echo "Stopping Halogen Flash..."
 podman stop -t "$GRACE" "$CONTAINER_NAME"
 echo "Stopped."
