@@ -5,3 +5,5 @@
 - You can commit changes when needed, but never push unless the user tells you to
 
 - If in doubt about what the user wants or how to word things, ask the user instead of guessing
+
+- For any text the user sees in the terminal (messages, prompts, errors), follow [MESSAGE_STYLE.md](MESSAGE_STYLE.md)
