@@ -39,9 +39,8 @@ To stop the server, press Ctrl-c from the same terminal, or run `./stop.sh`.
 
 ### What setup.sh asks you
 
-- Network binding: `localhost` (default) or LAN — **the engine has no
-   authentication**, so a LAN server is open to your whole network. API key support WIP.
-- The port to run it on. Non-root ports only (1024-65535)
+- Network binding: `localhost` (default) or all interfaces (0.0.0.0)
+- The port to run it on
 - Vision on/off
 - Parallel slots (maximum allowed concurrent requests)
 - Weights directory (default `~/models/halogen-models`, preserved across re-runs)
@@ -56,15 +55,17 @@ git pull
 ./refresh.sh
 ```
 
+Offers to stop the server and guides you through the rest of the process.
+
 ## Using with coding agents (Pi, OpenCode, etc)
 
-Point your harness to the IP address and port you chose (`http://127.0.0.1:8731/v1` by default), or tell your agent to add it to your harness' models list. It should then appear as `Halogen Qwen 3.8 Flash` in your list.
+Point your harness to the IP address, port (`http://127.0.0.1:8731/v1` by default), and API key you chose, or tell your agent to add it to your harness' models list. It should then appear as `Halogen Qwen 3.8 Flash` (or whatever you named it) in your list.
 
 ## Performance
 
-Stable, sustained 42-45 tok/s decode on multi-turn development on *real* codebases, without benchmark number trickery.
+Stable, sustained 55 tok/s decode on multi-turn development on *real* codebases, without benchmark number trickery.
 
-<img width="808" height="309" alt="image" src="https://github.com/user-attachments/assets/a276a4c9-192f-4a37-b9e4-6219e46c2a04" />
+<img width="784" height="427" alt="Halogen Flash performance at 55 tok/s" src="docs/assets/performance-55-tok-s.png" />
 
 Need raw numbers anyway? Look at the [official stats](https://github.com/peonist-ai/halogen-flash-server#measured) or [benchmark it yourself](https://github.com/peonist-ai/halogen-flash-server#measuring-a-checkpoint) (and let us know what you find!) 
 
