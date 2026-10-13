@@ -1,6 +1,6 @@
 # Qwen3.8-Flash-Next on AMD Strix Halo (Halogen Flash Server)
 
-<img width="1774" height="887" alt="Halogen Tech Poster with Robot Guide-anime" src="https://github.com/user-attachments/assets/5cc44348-8055-4200-b9c1-44ee909de315" />
+<img width="1280" height="640" alt="Halogen_ Qwen 3 8 Flash Banner-wizard-colorfix-resized" src="https://github.com/user-attachments/assets/0695b759-9f55-4368-87bb-a988c57b1260" />
 
 Local inference can be intimidating at first. So many engines, so many models, each with a thousand different custom quants.
 
