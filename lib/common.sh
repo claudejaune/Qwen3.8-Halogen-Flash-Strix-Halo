@@ -23,7 +23,7 @@ CONFIG_ALLOWED_KEYS=(
 # for the version this repo ships: setup.sh writes it into a new config.env,
 # and refresh.sh offers it to an existing one.
 HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
-HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.17.4"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.18.5"
 
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
@@ -46,7 +46,7 @@ HF_CHECKPOINT_FILE="qwen38-flash-next-v2.hgn"
 HF_NGRAM_FILE="qwen38-flash-next-ngram.hgn"
 # w4b is the 0.14 quant: the checkpoint plus its quality sidecar. Deprecated
 # upstream since 0.16.2 and outside its release testing, though it still
-# loads in 0.17.x. refresh.sh offers to replace it with v2 on a volume that
+# loads in current Halogen Flash releases. refresh.sh offers to replace it with v2 on a volume that
 # still holds it.
 HF_LEGACY_CHECKPOINT_FILE="qwen38-flash-next-w4b.hgn"
 HF_LEGACY_OVERLAY_FILE="qwen38-flash-next-w4b.overlay.hgn"
@@ -332,7 +332,7 @@ podman_container_running() {
 }
 
 # normalize_image <value>
-# Turns what a user types into a full image reference. A bare tag (0.17.4,
+# Turns what a user types into a full image reference. A bare tag (0.18.5,
 # latest), a :tag, or a complete reference all work.
 normalize_image() {
     local value="$1"

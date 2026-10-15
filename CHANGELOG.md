@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.2.1 - 2026-10-15
+
+- Pin the default Halogen Flash version to 0.18.5 in `setup.sh` and `refresh.sh`
+
 ## 1.2.0-rc.1 - 2026-10-13
 
 - `setup.sh`, `refresh.sh`, and `run.sh` use the Qwen 3.8 Flash v2 checkpoint by default and ship the Halogen engine through 0.17.4
