@@ -201,7 +201,6 @@ prune_candidates() {
 # version is set with --image, which expands a bare tag such as 0.18.16 or
 # :latest to a full reference. A `latest` pin is resolved to the version it
 # points at and written down, so every message names a number.
-info "=== Image ==="
 
 # apply_image <reference> — write the version into config.env and say so.
 apply_image() {
@@ -215,11 +214,15 @@ apply_image() {
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
     NEW_IMAGE="$(resolve_moving_tag "$(normalize_image "$IMAGE_OVERRIDE")")"
     if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
+        info "=== Image ==="
         ok "config.env already pins $(image_display "$HALOGEN_IMAGE")."
     else
         CURRENT_VERSION="$(image_version "$HALOGEN_IMAGE")" || CURRENT_VERSION=""
         if [[ "${NEW_IMAGE##*:}" =~ ^[0-9]+(\.[0-9]+)*$ ]] && [[ -n "$CURRENT_VERSION" ]] \
               && ! image_tag_ge "$NEW_IMAGE" "$CURRENT_VERSION"; then
+            # Going back to an older release is worth a louder header than a
+            # routine version change.
+            warn "=== Image version downgrade ==="
             echo "  Halogen Flash $(version_label "$NEW_IMAGE") is older than $(version_label "$HALOGEN_IMAGE")."
             echo ""
             if ask_yes_no_strict "  Downgrade to $(version_label "$NEW_IMAGE")?" n; then
@@ -228,10 +231,12 @@ if [[ -n "$IMAGE_OVERRIDE" ]]; then
                 ok "Keeping $(version_label "$HALOGEN_IMAGE")."
             fi
         else
+            info "=== Image ==="
             apply_image "$NEW_IMAGE"
         fi
     fi
 else
+    info "=== Image ==="
     # `latest` already says yes to the newest release, so taking its version
     # needs no asking. config.env keeps the number, the way it does for a
     # version typed on the command line.
@@ -791,7 +796,7 @@ if have podman && [[ "${HALOGEN_IMAGE##*:}" =~ ^[0-9] ]] \
                 ok "Freed $(bytes_gib "$FREED_BYTES") GiB."
             fi
         else
-            ok "Keeping $PRUNE_THEM."
+            ok "Not deleted."
         fi
         echo ""
     fi
