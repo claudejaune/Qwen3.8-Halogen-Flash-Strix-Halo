@@ -2,14 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## 1.3.0-rc.2 - 2026-10-26
-
-- Removed redundant `"Pull the <version number> image now?"` confirmation when refreshing to a new Halogen Flash version
-
-## 1.3.0-rc.1 - 2026-10-26
+## 1.3.0 - 2026-10-26
 
 - `refresh.sh` offers to delete older Halogen Flash versions and says how much space they'll free up
 - If nothing changed after a refresh, the script ends with "Refresh finished: No changes"
+- Removed redundant `"Pull the <version number> image now?"` confirmation when refreshing to a new Halogen Flash version
 
 ## 1.2.2 - 2026-10-26
 
