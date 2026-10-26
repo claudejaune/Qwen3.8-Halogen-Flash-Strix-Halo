@@ -775,7 +775,6 @@ if have podman && [[ "${HALOGEN_IMAGE##*:}" =~ ^[0-9] ]] \
         fi
         printf '%s\n' "${PRUNE_LINES[@]}"
         echo "  Deleting $PRUNE_THEM frees about $(bytes_gib "$PRUNE_TOTAL") GiB."
-        echo "  ./run.sh downloads a version again if you switch back to it."
         echo ""
         if ask_yes_no "  Delete $PRUNE_THEM?" n; then
             while IFS= read -r PRUNE_TAG; do
@@ -791,6 +790,8 @@ if have podman && [[ "${HALOGEN_IMAGE##*:}" =~ ^[0-9] ]] \
             if (( ${FREED_BYTES:-0} > 0 )); then
                 ok "Freed $(bytes_gib "$FREED_BYTES") GiB."
             fi
+        else
+            ok "Keeping $PRUNE_THEM."
         fi
         echo ""
     fi
