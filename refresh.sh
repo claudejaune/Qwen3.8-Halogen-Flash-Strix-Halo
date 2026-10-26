@@ -138,6 +138,63 @@ stop_and_delete() {
     return 0
 }
 
+# installed_versions — every version of Halogen Flash on this machine, newest
+# first. A tag that is not a version (`latest`, a build of someone's own) is
+# left out: it is not a version to keep or to clear.
+installed_versions() {
+    local line tag
+    podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" == "$HALOGEN_IMAGE_REPO":* ]]; then
+            tag="${line##*:}"
+            if [[ "$tag" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+                printf '%s\n' "$tag"
+            fi
+        fi
+    done | sort -Vru
+}
+
+# image_unique_bytes <version> — the space deleting this one version frees.
+# podman reports a per-image unique size: its own layers, not the ones another
+# version still shares, which is the number worth promising. The table's
+# created column holds a space ("11 days"), so its columns are counted from
+# the end. Falls back to the whole size when there is no row to read.
+image_unique_bytes() {
+    local tag="$1" human
+    human="$(podman system df -v 2>/dev/null \
+        | awk -v repo="$HALOGEN_IMAGE_REPO" -v want="$tag" '$1 == repo && $2 == want { print $(NF-1); exit }')"
+    if [[ -z "$human" ]]; then
+        podman image inspect "$HALOGEN_IMAGE_REPO:$tag" --format '{{.Size}}' 2>/dev/null
+        return 0
+    fi
+    awk -v h="$human" 'BEGIN {
+        if (!match(h, /^[0-9.]+/)) { print 0; exit }
+        n = substr(h, 1, RLENGTH); u = substr(h, RLENGTH + 1); m = 1
+        if (u == "kB" || u == "KB") m = 1000
+        else if (u == "MB") m = 1000000
+        else if (u == "GB") m = 1000000000
+        else if (u == "TB") m = 1000000000000
+        printf "%.0f\n", n * m
+    }'
+}
+
+# prune_candidates <current-version> — the older versions worth offering to
+# delete: every one below the pinned version except the newest of them, which
+# stays as the version to fall back to. Prints nothing when there is nothing to
+# clear, or when the only thing to clear would be that fallback.
+prune_candidates() {
+    local current="$1" tag
+    local -a older=()
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        [[ "$tag" == "$current" ]] && continue
+        image_tag_ge "$tag" "$current" || older+=("$tag")
+    done < <(installed_versions)
+    if (( ${#older[@]} < 2 )); then
+        return 0
+    fi
+    printf '%s\n' "${older[@]}" | sort -Vru | tail -n +2
+}
+
 # ── Image ────────────────────────────────────────────────────────────────────
 # Nothing is asked when config.env already pins the recommended version.
 # Otherwise one yes/no prompt either takes it or stays put. Any other
@@ -686,12 +743,68 @@ if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     echo ""
 fi
 
+# ── Older versions ───────────────────────────────────────────────────────────
+# Every version pulled stays on disk, so a machine refreshed a few times carries
+# several. The newest older one stays as the version to go back to; the rest are
+# dead weight, and this is the one prompt that clears them. It runs only once
+# the refresh has settled — nothing to update, or the new version pulled — so a
+# half-finished run never deletes anything.
+FREED_BYTES=""
+if have podman && [[ "${HALOGEN_IMAGE##*:}" =~ ^[0-9] ]] \
+      && podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
+    PRUNE_LIST="$(prune_candidates "${HALOGEN_IMAGE##*:}")"
+    if [[ -n "$PRUNE_LIST" ]]; then
+        info "=== Older versions ==="
+        PRUNE_TOTAL=0
+        PRUNE_COUNT=0
+        PRUNE_LINES=()
+        while IFS= read -r PRUNE_TAG; do
+            [[ -n "$PRUNE_TAG" ]] || continue
+            PRUNE_BYTES="$(image_unique_bytes "$PRUNE_TAG")"
+            PRUNE_TOTAL=$((PRUNE_TOTAL + ${PRUNE_BYTES:-0}))
+            PRUNE_COUNT=$((PRUNE_COUNT + 1))
+            PRUNE_LINES+=("$(printf '    %-10s %s GiB' "$PRUNE_TAG" "$(bytes_gib "$PRUNE_BYTES")")")
+        done <<<"$PRUNE_LIST"
+        PRUNE_THEM="them"
+        echo ""
+        if (( PRUNE_COUNT == 1 )); then
+            echo "  One older Halogen Flash version is on disk:"
+            PRUNE_THEM="it"
+        else
+            echo "  $PRUNE_COUNT older Halogen Flash versions are on disk:"
+        fi
+        printf '%s\n' "${PRUNE_LINES[@]}"
+        echo "  Deleting $PRUNE_THEM frees about $(bytes_gib "$PRUNE_TOTAL") GiB."
+        echo "  ./run.sh downloads a version again if you switch back to it."
+        echo ""
+        if ask_yes_no "  Delete $PRUNE_THEM?" n; then
+            while IFS= read -r PRUNE_TAG; do
+                [[ -n "$PRUNE_TAG" ]] || continue
+                PRUNE_BYTES="$(image_unique_bytes "$PRUNE_TAG")"
+                if PRUNE_WHY="$(podman image rm "$HALOGEN_IMAGE_REPO:$PRUNE_TAG" 2>&1)"; then
+                    ok "Deleted $PRUNE_TAG ($(bytes_gib "${PRUNE_BYTES:-0}") GiB)."
+                    FREED_BYTES=$(( ${FREED_BYTES:-0} + ${PRUNE_BYTES:-0} ))
+                else
+                    warn "Could not delete $PRUNE_TAG: ${PRUNE_WHY%%$'\n'*}"
+                fi
+            done <<<"$PRUNE_LIST"
+            if (( ${FREED_BYTES:-0} > 0 )); then
+                ok "Freed $(bytes_gib "$FREED_BYTES") GiB."
+            fi
+        fi
+        echo ""
+    fi
+fi
+
 echo ""
 echo "============================================"
 echo " Refresh finished."
 echo "============================================"
 echo "  Image:      $(image_display "$HALOGEN_IMAGE")"
 echo "  Checkpoint: $CK_BASE"
+if (( ${FREED_BYTES:-0} > 0 )); then
+    echo "  Freed:      $(bytes_gib "$FREED_BYTES") GiB of older versions"
+fi
 if [[ "${READY:-1}" == "1" ]]; then
     echo -e "  Ready:      \033[1;32mYes\033[0m — ./run.sh"
 else
