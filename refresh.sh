@@ -220,7 +220,7 @@ if [[ -n "$IMAGE_OVERRIDE" ]]; then
         CURRENT_VERSION="$(image_version "$HALOGEN_IMAGE")" || CURRENT_VERSION=""
         if [[ "${NEW_IMAGE##*:}" =~ ^[0-9]+(\.[0-9]+)*$ ]] && [[ -n "$CURRENT_VERSION" ]] \
               && ! image_tag_ge "$NEW_IMAGE" "$CURRENT_VERSION"; then
-            echo "  Halogen Flash $(version_label "$HALOGEN_IMAGE") is newer than $(version_label "$NEW_IMAGE")."
+            echo "  Halogen Flash $(version_label "$NEW_IMAGE") is older than $(version_label "$HALOGEN_IMAGE")."
             echo ""
             if ask_yes_no_strict "  Downgrade to $(version_label "$NEW_IMAGE")?" n; then
                 apply_image "$NEW_IMAGE"
