@@ -228,7 +228,12 @@ apply_image() {
     ok "Backup saved as: $backup_path"
 }
 
+# Saying yes to a version is saying yes to getting it, so the pull below
+# follows without asking a second time.
+PULL_CONSENT=0
+
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
+    PULL_CONSENT=1
     NEW_IMAGE="$(resolve_moving_tag "$(normalize_image "$IMAGE_OVERRIDE")")"
     if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
         info "=== Image ==="
@@ -244,6 +249,7 @@ if [[ -n "$IMAGE_OVERRIDE" ]]; then
             echo ""
             if ask_yes_no_strict "  Downgrade to $(version_label "$NEW_IMAGE")?" n; then
                 apply_image "$NEW_IMAGE"
+                PULL_CONSENT=1
             else
                 ok "Keeping $(version_label "$HALOGEN_IMAGE")."
             fi
@@ -279,6 +285,7 @@ else
         echo ""
         if ask_yes_no_strict "  Upgrade to $(version_label "$HALOGEN_RECOMMENDED_IMAGE")?" y; then
             apply_image "$HALOGEN_RECOMMENDED_IMAGE"
+            PULL_CONSENT=1
         else
             ok "Keeping $(version_label "$HALOGEN_IMAGE")."
         fi
@@ -288,16 +295,22 @@ fi
 # A pinned version tag is immutable, so a present image is current. `latest`
 # can move, so it is always offered.
 echo ""
-if ! have podman; then
-    warn "podman not installed — skipping image refresh."
-elif podman image exists "$HALOGEN_IMAGE" 2>/dev/null && [[ "$HALOGEN_IMAGE" != *:latest ]]; then
-    ok "Image present: $(version_label "$HALOGEN_IMAGE")"
-elif ask_yes_no "  Pull the $(version_label "$HALOGEN_IMAGE") image now?" y; then
+pull_image() {
     if podman pull "$HALOGEN_IMAGE"; then
         ok "Image refreshed."
     else
         warn "Pull failed. The old image (if any) is still available."
     fi
+}
+if ! have podman; then
+    warn "podman not installed — skipping image refresh."
+elif podman image exists "$HALOGEN_IMAGE" 2>/dev/null && [[ "$HALOGEN_IMAGE" != *:latest ]]; then
+    ok "Image present: $(version_label "$HALOGEN_IMAGE")"
+elif (( PULL_CONSENT )); then
+    info "Pulling $(version_label "$HALOGEN_IMAGE")..."
+    pull_image
+elif ask_yes_no "  Pull the $(version_label "$HALOGEN_IMAGE") image now?" y; then
+    pull_image
 fi
 echo ""
 
