@@ -79,9 +79,9 @@ Point your harness to the IP address, port (`http://127.0.0.1:8731/v1` by defaul
 
 ## Performance
 
-Stable, sustained 55 tok/s decode on multi-turn development on *real* codebases, without benchmark number trickery.
+Stable, sustained 65+ tok/s decode on multi-turn development on *real* codebases, without benchmark number trickery.
 
-<img width="784" height="427" alt="Halogen Flash performance at 55 tok/s" src="docs/assets/performance-55-tok-s.png" />
+<img width="784" height="305" alt="Halogen Flash performance at 68 tok/s" src="docs/assets/performance-68-tok-s.png" />
 
 Need raw numbers anyway? Look at the [official stats](https://github.com/peonist-ai/halogen-flash-server#measured) or [benchmark it yourself](https://github.com/peonist-ai/halogen-flash-server#measuring-a-checkpoint) (and let us know what you find!) 
 
