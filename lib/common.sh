@@ -151,16 +151,20 @@ ask_yes_no() {
 # the engine upgrade: a user who types a version number there means
 # something this script will not do, and silently getting the recommended
 # version reads as consent to their own input. Anything that is not a
-# clear yes or no is rejected and asked again. End of input falls back to
-# the default, so a piped or closed stdin cannot hang the script.
+# clear yes or no is rejected and asked again. A bare Enter or end of input
+# takes the default, so a piped or closed stdin cannot hang the script.
 ask_yes_no_strict() {
-    local prompt="$1" default="${2:-y}" reply
+    local prompt="$1" default="${2:-y}" reply hint="[Y/n]"
+    if [[ "$default" == "n" ]]; then
+        hint="[y/N]"
+    fi
     while true; do
-        if ! read -rp "$prompt [Y/n]: " reply; then
+        if ! read -rp "$prompt $hint: " reply; then
             if [[ "$default" == "n" ]]; then return 1; else return 0; fi
         fi
         case "${reply//[[:space:]]/}" in
-            ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+            "") if [[ "$default" == "n" ]]; then return 1; else return 0; fi ;;
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
             [Nn]|[Nn][Oo])        return 1 ;;
             *) echo "  Please enter y/n" >&2 ;;
         esac
