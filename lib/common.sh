@@ -23,7 +23,7 @@ CONFIG_ALLOWED_KEYS=(
 # for the version this repo ships: setup.sh writes it into a new config.env,
 # and refresh.sh offers it to an existing one.
 HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
-HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.18.5"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.18.16"
 
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
