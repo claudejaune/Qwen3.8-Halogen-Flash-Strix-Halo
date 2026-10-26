@@ -195,6 +195,23 @@ prune_candidates() {
     printf '%s\n' "${older[@]}" | sort -Vru | tail -n +2
 }
 
+# state_fingerprint — a digest of everything a refresh can change: config.env,
+# the model files on disk, and the versions on the machine. The closing banner
+# compares it against the one taken at the start, so "No changes" means nothing
+# was written, downloaded, or deleted — not merely that no prompt was answered.
+state_fingerprint() {
+    {
+        sha256sum "$CONFIG_FILE" 2>/dev/null | cut -d' ' -f1
+        find "$MODELS_DIR" -type f -printf '%P %s\n' 2>/dev/null | sort
+        if have podman; then
+            podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+                | awk -v r="$HALOGEN_IMAGE_REPO" 'index($0, r ":") == 1' | sort
+        fi
+    } | sha256sum | cut -d' ' -f1
+}
+
+START_STATE="$(state_fingerprint)"
+
 # ── Image ────────────────────────────────────────────────────────────────────
 # Nothing is asked when config.env already pins the recommended version.
 # Otherwise one yes/no prompt either takes it or stays put. Any other
@@ -804,7 +821,11 @@ fi
 
 echo ""
 echo "============================================"
-echo " Refresh finished."
+if [[ "$(state_fingerprint)" == "$START_STATE" ]]; then
+    echo " Refresh finished: No changes"
+else
+    echo " Refresh finished."
+fi
 echo "============================================"
 echo "  Image:      $(image_display "$HALOGEN_IMAGE")"
 echo "  Checkpoint: $CK_BASE"
