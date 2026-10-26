@@ -38,7 +38,7 @@ while (( $# )); do
     case "$1" in
         --image)
             if [[ -z "${2:-}" ]]; then
-                err "--image needs a version, such as 0.18.5."
+                err "--image needs a version, such as 0.18.16."
             fi
             IMAGE_OVERRIDE="$2"
             shift 2
@@ -141,7 +141,7 @@ stop_and_delete() {
 # ── Image ────────────────────────────────────────────────────────────────────
 # Nothing is asked when config.env already pins the recommended version.
 # Otherwise one yes/no prompt either takes it or stays put. Any other
-# version is set with --image, which expands a bare tag such as 0.18.5 or
+# version is set with --image, which expands a bare tag such as 0.18.16 or
 # :latest to a full reference. A `latest` pin is resolved to the version it
 # points at and written down, so every message names a number.
 info "=== Image ==="

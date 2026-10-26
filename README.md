@@ -57,6 +57,22 @@ git pull
 
 Offers to stop the server and guides you through the rest of the process.
 
+#### Updating to a specific version
+
+To update to a specific Halogen Flash version (e.g., to try versions newer than the pinned ones or roll back to an older version in case of a regression), run:
+
+```bash
+git pull
+./refresh.sh --image 0.18.16
+```
+
+You can also pull the latest Halogen Flash version offered by upstream:
+
+```bash
+git pull
+./refresh.sh --image latest
+```
+
 ## Using with coding agents (Pi, OpenCode, etc)
 
 Point your harness to the IP address, port (`http://127.0.0.1:8731/v1` by default), and API key you chose, or tell your agent to add it to your harness' models list. It should then appear as `Halogen Qwen 3.8 Flash` (or whatever you named it) in your list.

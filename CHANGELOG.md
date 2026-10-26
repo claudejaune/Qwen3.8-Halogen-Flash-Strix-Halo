@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.2.2 - 2026-10-26
+
+- Pin the default Halogen Flash version to 0.18.16 in `setup.sh` and `refresh.sh`
+- Running `refresh.sh --image latest` specifies the exact version pulled instead of just "latest"
+- `refresh.sh --image <older version>` now asks for confirmation
+
 ## 1.2.1 - 2026-10-15
 
 - Pin the default Halogen Flash version to 0.18.5 in `setup.sh` and `refresh.sh`

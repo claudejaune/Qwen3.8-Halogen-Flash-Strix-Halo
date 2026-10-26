@@ -332,7 +332,7 @@ podman_container_running() {
 }
 
 # normalize_image <value>
-# Turns what a user types into a full image reference. A bare tag (0.18.5,
+# Turns what a user types into a full image reference. A bare tag (0.18.16,
 # latest), a :tag, or a complete reference all work.
 normalize_image() {
     local value="$1"
