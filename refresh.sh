@@ -142,32 +142,67 @@ stop_and_delete() {
 # Nothing is asked when config.env already pins the recommended version.
 # Otherwise one yes/no prompt either takes it or stays put. Any other
 # version is set with --image, which expands a bare tag such as 0.18.5 or
-# :latest to a full reference.
+# :latest to a full reference. A `latest` pin is resolved to the version it
+# points at and written down, so every message names a number.
 info "=== Image ==="
 
+# apply_image <reference> — write the version into config.env and say so.
+apply_image() {
+    local new="$1" backup_path
+    backup_path="$(rewrite_config_key HALOGEN_IMAGE "$new")"
+    HALOGEN_IMAGE="$new"
+    ok "config.env updated to $(image_display "$HALOGEN_IMAGE")."
+    ok "Backup saved as: $backup_path"
+}
+
 if [[ -n "$IMAGE_OVERRIDE" ]]; then
-    NEW_IMAGE="$(normalize_image "$IMAGE_OVERRIDE")"
+    NEW_IMAGE="$(resolve_moving_tag "$(normalize_image "$IMAGE_OVERRIDE")")"
     if [[ "$NEW_IMAGE" == "$HALOGEN_IMAGE" ]]; then
-        ok "config.env already pins $HALOGEN_IMAGE."
+        ok "config.env already pins $(image_display "$HALOGEN_IMAGE")."
     else
-        backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
-        HALOGEN_IMAGE="$NEW_IMAGE"
-        ok "config.env updated to $HALOGEN_IMAGE."
-        ok "Backup saved as: $backup_path"
+        CURRENT_VERSION="$(image_version "$HALOGEN_IMAGE")" || CURRENT_VERSION=""
+        if [[ "${NEW_IMAGE##*:}" =~ ^[0-9]+(\.[0-9]+)*$ ]] && [[ -n "$CURRENT_VERSION" ]] \
+              && ! image_tag_ge "$NEW_IMAGE" "$CURRENT_VERSION"; then
+            echo "  Halogen Flash $(version_label "$HALOGEN_IMAGE") is newer than $(version_label "$NEW_IMAGE")."
+            echo ""
+            if ask_yes_no_strict "  Downgrade to $(version_label "$NEW_IMAGE")?" n; then
+                apply_image "$NEW_IMAGE"
+            else
+                ok "Keeping $(version_label "$HALOGEN_IMAGE")."
+            fi
+        else
+            apply_image "$NEW_IMAGE"
+        fi
     fi
-elif [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
-    ok "config.env is on the recommended version: $(version_label "$HALOGEN_IMAGE")."
 else
-    echo "  config.env pins $(version_label "$HALOGEN_IMAGE"), but $(version_label "$HALOGEN_RECOMMENDED_IMAGE") is available"
-    echo ""
-    if ask_yes_no_strict "  Upgrade to $(version_label "$HALOGEN_RECOMMENDED_IMAGE")?" y; then
-        NEW_IMAGE="$HALOGEN_RECOMMENDED_IMAGE"
-        backup_path="$(rewrite_config_key HALOGEN_IMAGE "$NEW_IMAGE")"
-        HALOGEN_IMAGE="$NEW_IMAGE"
-        ok "config.env updated to $HALOGEN_IMAGE."
-        ok "Backup saved as: $backup_path"
+    # `latest` already says yes to the newest release, so taking its version
+    # needs no asking. config.env keeps the number, the way it does for a
+    # version typed on the command line.
+    RESOLVED_IMAGE="$(resolve_moving_tag "$HALOGEN_IMAGE")"
+    if [[ "$RESOLVED_IMAGE" != "$HALOGEN_IMAGE" ]]; then
+        apply_image "$RESOLVED_IMAGE"
+    fi
+
+    if [[ ! "${HALOGEN_IMAGE##*:}" =~ ^[0-9] ]]; then
+        # No version number to compare against: `latest` tracks the newest
+        # release, and any other tag is a build of the user's own choosing.
+        if [[ "${HALOGEN_IMAGE##*:}" == "latest" ]]; then
+            ok "config.env tracks the newest Halogen Flash release."
+        else
+            ok "config.env pins $(image_display "$HALOGEN_IMAGE")."
+        fi
+    elif [[ "$HALOGEN_IMAGE" == "$HALOGEN_RECOMMENDED_IMAGE" ]]; then
+        ok "config.env is on the recommended version: $(version_label "$HALOGEN_IMAGE")."
+    elif image_tag_ge "$HALOGEN_IMAGE" "${HALOGEN_RECOMMENDED_IMAGE##*:}"; then
+        ok "Halogen Flash $(version_label "$HALOGEN_IMAGE") is newer than the $(version_label "$HALOGEN_RECOMMENDED_IMAGE") this repo ships."
     else
-        ok "Keeping $(version_label "$HALOGEN_IMAGE")."
+        echo "  config.env pins $(version_label "$HALOGEN_IMAGE"), but $(version_label "$HALOGEN_RECOMMENDED_IMAGE") is available"
+        echo ""
+        if ask_yes_no_strict "  Upgrade to $(version_label "$HALOGEN_RECOMMENDED_IMAGE")?" y; then
+            apply_image "$HALOGEN_RECOMMENDED_IMAGE"
+        else
+            ok "Keeping $(version_label "$HALOGEN_IMAGE")."
+        fi
     fi
 fi
 
@@ -655,7 +690,7 @@ echo ""
 echo "============================================"
 echo " Refresh finished."
 echo "============================================"
-echo "  Image:      $HALOGEN_IMAGE"
+echo "  Image:      $(image_display "$HALOGEN_IMAGE")"
 echo "  Checkpoint: $CK_BASE"
 if [[ "${READY:-1}" == "1" ]]; then
     echo -e "  Ready:      \033[1;32mYes\033[0m — ./run.sh"

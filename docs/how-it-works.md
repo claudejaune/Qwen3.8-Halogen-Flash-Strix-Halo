@@ -259,13 +259,15 @@ the checkpoint is hashed only when you ask for it (`./refresh.sh --verify`).
 
 After `git pull`, `./refresh.sh`:
 
-1. Compares the version in `config.env` with the one this repo ships and asks
-   **Upgrade to v0.17.4?** — yes takes it, no stays put. The prompt accepts
-   only yes or no; a typed version is rejected and the question repeats,
-   because this script runs the recommended version and nothing else. A
-   different version
-   is set with `./refresh.sh --image 0.16.2`, which expands a bare tag such
-   as `0.17.4` or `:latest` to a full reference. `config.env` is
+1. Turns a `latest` pin into the exact version it points at and writes that
+   version to `config.env`, so every message names a number. Then compares the
+   version in `config.env` with the one this repo ships: a newer one stays put,
+   an equal one is confirmed, and an older one asks **Upgrade to v0.17.4?** —
+   yes takes it, no stays put. The prompt accepts only yes or no; a typed
+   version is rejected and the question repeats. Another version is set with
+   `./refresh.sh --image 0.16.2`, which expands a bare tag such as `0.17.4` or
+   `:latest` to a full reference. Naming a version older than the one in use
+   asks **Downgrade to v0.16.2?** first, and the default is no. `config.env` is
    backed up to `backups/` first
 2. Offers to `podman pull` the image (the default is yes when the version
    changed)

@@ -345,6 +345,110 @@ normalize_image() {
     fi
 }
 
+# image_version_local <image-ref> — the version the image on disk reports, read
+# from its own org.opencontainers.image.version label. Prints nothing and
+# returns 1 when podman is missing, the image is not here, or it carries no
+# label.
+image_version_local() {
+    local ref="$1" ver
+    have podman || return 1
+    ver="$(podman image inspect "$ref" \
+        --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
+        2>/dev/null)" || return 1
+    if [[ "$ver" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        printf '%s\n' "$ver"
+        return 0
+    fi
+    return 1
+}
+
+# image_version <image-ref> — the version a reference names: the tag when it is
+# already a number, otherwise the version of the image on disk. Returns 1 when
+# neither answers, so a caller can tell "no version" from "version 0".
+image_version() {
+    local tag="${1##*:}"
+    if [[ "$tag" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        printf '%s\n' "$tag"
+        return 0
+    fi
+    image_version_local "$1"
+}
+
+# image_version_upstream <image-ref> — the version the registry reports for
+# this tag, read from the image config its manifest points at. Public
+# registries answer after a bearer token and say where to get one in a 401
+# challenge. Needs curl and python3, the same tools the model checks use.
+# Prints nothing and returns 1 when offline, a tool is missing, the tag is
+# unknown, or the registry does not use this shape — the caller then keeps the
+# tag it has.
+image_version_upstream() {
+    local ref="$1" host rest repo tag www realm service scope token digest ver
+    local accept='application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json'
+    have curl || return 1
+    have python3 || return 1
+    [[ "$ref" == */* ]] || return 1
+    host="${ref%%/*}"
+    [[ "$host" == *.* || "$host" == *:* ]] || return 1
+    rest="${ref#*/}"
+    [[ "$rest" == *:* ]] || return 1
+    tag="${rest##*:}"
+    repo="${rest%:*}"
+
+    www="$(curl -sS -o /dev/null -D - --connect-timeout 5 --max-time 15 \
+             -H "Accept: $accept" "https://$host/v2/$repo/manifests/$tag" 2>/dev/null \
+             | tr -d '\r' \
+             | awk 'tolower($1) == "www-authenticate:" { sub(/^[^ ]+ /, ""); print; exit }')" || return 1
+    realm="$(sed -n 's/.*realm="\([^"]*\)".*/\1/p' <<<"$www")"
+    service="$(sed -n 's/.*service="\([^"]*\)".*/\1/p' <<<"$www")"
+    scope="$(sed -n 's/.*scope="\([^"]*\)".*/\1/p' <<<"$www")"
+    [[ -n "$realm" ]] || realm="https://$host/token"
+    [[ -n "$scope" ]] || scope="repository:$repo:pull"
+
+    token="$(curl -fsSL --connect-timeout 5 --max-time 15 \
+               "${realm}?service=${service}&scope=${scope}" 2>/dev/null \
+               | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null)" || return 1
+    [[ -n "$token" ]] || return 1
+
+    digest="$(curl -fsSL --connect-timeout 5 --max-time 15 \
+                -H "Authorization: Bearer $token" -H "Accept: $accept" \
+                "https://$host/v2/$repo/manifests/$tag" 2>/dev/null \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin).get("config",{}).get("digest",""))' 2>/dev/null)" || return 1
+    [[ "$digest" == sha256:* ]] || return 1
+
+    ver="$(curl -fsSL --connect-timeout 5 --max-time 15 \
+             -H "Authorization: Bearer $token" \
+             "https://$host/v2/$repo/blobs/$digest" 2>/dev/null \
+             | python3 -c 'import json,sys; print((json.load(sys.stdin).get("config") or {}).get("Labels", {}).get("org.opencontainers.image.version", ""))' 2>/dev/null)" || return 1
+    [[ "$ver" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+    printf '%s\n' "$ver"
+}
+
+# resolve_moving_tag <image-ref> — a `latest` reference with its tag replaced by
+# the version the registry says `latest` is now. Everything else comes back
+# unchanged, and so does `latest` when the registry cannot be reached: a
+# version nobody could confirm is not worth writing down.
+resolve_moving_tag() {
+    local ref="$1" ver
+    if [[ "${ref##*:}" == "latest" ]] && ver="$(image_version_upstream "$ref")"; then
+        printf '%s\n' "${ref%:*}:$ver"
+    else
+        printf '%s\n' "$ref"
+    fi
+}
+
+# image_display <image-ref> — a reference for a report line. A version tag is
+# already the answer; a moving tag gains the version of the image on disk:
+# `ghcr.io/…:latest (v0.18.16)`. Nothing is fetched to find it.
+image_display() {
+    local ref="$1" ver=""
+    [[ "${ref##*:}" =~ ^[0-9] ]] || ver="$(image_version_local "$ref")" || ver=""
+    if [[ -n "$ver" ]]; then
+        printf '%s (v%s)' "$ref" "$ver"
+    else
+        printf '%s' "$ref"
+    fi
+}
+
 # version_label <image-ref> — the tag for display, prefixed with "v" when it
 # looks like a version number. `latest` and sha tags keep their own name, so
 # a prompt never reads "vlatest".
