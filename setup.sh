@@ -230,6 +230,22 @@ MEM_TOTAL_GIB=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 MEM_AVAIL_GIB=$(awk '/MemAvailable/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 info "Total RAM: ${MEM_TOTAL_GIB} GiB  Available: ${MEM_AVAIL_GIB} GiB"
 
+# The model and the GPU memory sizes both follow the installed memory. A
+# machine below the 96 GB class cannot run either model, so stop before
+# writing a config or offering a download that cannot fit.
+HALO_MEMORY_SIZE="$(halo_memory_size)"
+if [[ "$HALO_MEMORY_SIZE" == "unknown" ]]; then
+    HALO_MEMORY_GIB="$(halo_memory_gib 2>/dev/null || echo "?")"
+    err "This machine reports about ${HALO_MEMORY_GIB} GiB of memory. Halogen Flash needs a 96 GB or 128 GB Strix Halo."
+fi
+CHECKPOINT_FILE="$(preferred_checkpoint "$HALO_MEMORY_SIZE")"
+QUANT_DOWNLOAD_GIB="$(quant_download_gib "$CHECKPOINT_FILE")"
+if [[ "$HALO_MEMORY_SIZE" == "96" ]]; then
+    DISK_MIN_GIB=120
+fi
+info "Machine:    ${HALO_MEMORY_SIZE} GB Strix Halo"
+info "Model:      $(quant_label "$CHECKPOINT_FILE")"
+
 # ── GPU device access ────────────────────────────────────────────────────────
 # The engine opens /dev/kfd and a /dev/dri/render* node. On Fedora and Arch the
 # udev default makes those nodes world-readable/writable; on Ubuntu they are
@@ -274,13 +290,24 @@ cmdline_has() {
     [[ "$CMDLINE" == *" $1 "* || "$CMDLINE" == "$1 *" || "$CMDLINE" == *" $1" || "$CMDLINE" == "$1" ]]
 }
 
-# The kernel command line this repo recommends (validated on a 128 GiB
-# Strix Halo). ttm.pages_limit and amdgpu.gttsize are a matched pair —
-# pages_limit x 4 KiB = gtts size (120 GiB).
+# The kernel command line this repo recommends. ttm.pages_limit and
+# amdgpu.gttsize are a matched pair — pages_limit x 4 KiB = gttsize — and both
+# keep an 8 GiB gap below the installed memory: 120 GiB on a 128 GB machine,
+# 88 GiB on a 96 GB machine.
+case "$HALO_MEMORY_SIZE" in
+    96)
+        GTT_SIZE_MIB=90112
+        TTM_PAGES_LIMIT=23068672
+        ;;
+    *)
+        GTT_SIZE_MIB=122880
+        TTM_PAGES_LIMIT=31457280
+        ;;
+esac
 EXPECTED_PARAMS=(
     "amd_iommu=off"
-    "ttm.pages_limit=31457280"
-    "amdgpu.gttsize=122880"
+    "ttm.pages_limit=$TTM_PAGES_LIMIT"
+    "amdgpu.gttsize=$GTT_SIZE_MIB"
 )
 MISSING_PARAMS=()
 for p in "${EXPECTED_PARAMS[@]}"; do
@@ -648,7 +675,7 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Folder for the model (about 110 GiB). Press Enter for the default: $THIS_DEFAULT"
+    echo "  Folder for the model (about ${QUANT_DOWNLOAD_GIB} GiB). Press Enter for the default: $THIS_DEFAULT"
     echo "  It must be an absolute path"
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
     FALLBACK_DEFAULT=false
@@ -944,7 +971,7 @@ else
         echo "  vision on to fetch the sidecar."
         echo ""
     fi
-    if ask_yes_no "  Download the weights now (~110 GiB)?" y; then
+    if ask_yes_no "  Download the weights now (~${QUANT_DOWNLOAD_GIB} GiB)?" y; then
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
@@ -1019,7 +1046,7 @@ fi
 echo "============================================"
 echo ""
 echo "  Image:      $DEFAULT_IMAGE"
-echo "  Checkpoint: $CHECKPOINT_FILE"
+echo "  Model:      $(quant_label "$CHECKPOINT_FILE")"
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Weights:    $MODELS_DIR (ready)"
 else
@@ -1043,7 +1070,7 @@ echo ""
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Start the server with ./run.sh. The first start takes a few minutes."
 else
-echo "  Run ./run.sh to download the model (~110 GiB)."
+echo "  Run ./run.sh to download the model (~${QUANT_DOWNLOAD_GIB} GiB)."
 fi
 echo ""
 

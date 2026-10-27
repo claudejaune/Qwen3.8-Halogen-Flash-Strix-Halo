@@ -43,6 +43,9 @@ HF_RESOLVE_URL="https://huggingface.co/$HF_REPO_ID/resolve/main"
 # v2 is the current quant: one checkpoint file with no sidecar, plus its
 # lookup table beside it (~110 GiB together).
 HF_CHECKPOINT_FILE="qwen38-flash-next-v2.hgn"
+# ht43 is the smaller checkpoint for 96 GB machines, added in engine 0.16.
+# It reads the same lookup table and holds about 8 GiB less in memory.
+HF_HT43_CHECKPOINT_FILE="qwen38-flash-next-ht43.hgn"
 HF_NGRAM_FILE="qwen38-flash-next-ngram.hgn"
 # w4b is the 0.14 quant: the checkpoint plus its quality sidecar. Deprecated
 # upstream since 0.16.2 and outside its release testing, though it still
@@ -105,6 +108,61 @@ have() { command -v "$1" &>/dev/null; }
 require_not_root() {
     if [[ "$(id -u)" -eq 0 ]]; then
         err "Don't run this as root (sudo). Run as your normal user."
+    fi
+}
+
+# ── Machine size ─────────────────────────────────────────────────────────────
+# Strix Halo ships with 128 GB or 96 GB of unified memory, and the two need
+# different GPU memory sizes on the kernel command line. MemTotal is not the
+# installed size: firmware takes the iGPU's carve-out before Linux boots, and
+# the kernel reserves some of the rest. amdgpu reports that carve-out in
+# mem_info_vram_total, so adding it back tells the two sizes apart.
+
+# Largest amdgpu VRAM carve-out on this host, in bytes. Prints 0 when no card
+# exposes the counter (driver not loaded, or no node readable).
+halo_vram_bytes() {
+    local sys="${1:-/sys}" f v bytes=0
+    for f in "$sys"/class/drm/card*/device/mem_info_vram_total; do
+        [[ -r "$f" ]] || continue
+        v="$(cat "$f" 2>/dev/null)" || continue
+        [[ "$v" =~ ^[0-9]+$ ]] || continue
+        if (( v > bytes )); then
+            bytes="$v"
+        fi
+    done
+    printf '%s\n' "$bytes"
+}
+
+# halo_memory_gib [meminfo] [sys-root] — installed unified memory in GiB,
+# rounded to the nearest GiB. MemTotal plus the iGPU carve-out lands a few GiB
+# below the installed size because the kernel reserves that much too, which is
+# close enough to tell the sizes apart. Prints nothing and returns 1 when
+# MemTotal cannot be read.
+halo_memory_gib() {
+    local meminfo="${1:-/proc/meminfo}" sys="${2:-/sys}" kb vram
+    kb="$(awk '/^MemTotal:/ {print $2; exit}' "$meminfo" 2>/dev/null)"
+    [[ "$kb" =~ ^[0-9]+$ ]] || return 1
+    vram="$(halo_vram_bytes "$sys")"
+    awk -v kb="$kb" -v vb="$vram" 'BEGIN { printf "%.0f\n", (kb * 1024 + vb) / 1073741824 }'
+}
+
+# halo_memory_size [meminfo] [sys-root] — "128" or "96": the memory size this
+# Strix Halo shipped with. Prints "unknown" when MemTotal cannot be read or the
+# estimate falls below the 96 GB class, which is the smallest machine either
+# model fits. The midpoint between the two sizes is 112 GiB, which leaves more
+# than 10 GiB on either side of each estimate.
+halo_memory_size() {
+    local gib
+    if ! gib="$(halo_memory_gib "${1:-/proc/meminfo}" "${2:-/sys}")"; then
+        printf 'unknown\n'
+        return 0
+    fi
+    if (( gib >= 112 )); then
+        printf '128\n'
+    elif (( gib >= 80 )); then
+        printf '96\n'
+    else
+        printf 'unknown\n'
     fi
 }
 
@@ -470,17 +528,34 @@ version_label() {
 # checkpoint's base name (as in HALOGEN_CHECKPOINT) and answers what that
 # quant needs on disk.
 
-# selected_checkpoint [config-value] [models-dir]
+# preferred_checkpoint [memory-size]
+# The checkpoint this machine runs: ht43 on a 96 GB machine, v2 everywhere
+# else. Reads the size live when it is not given.
+preferred_checkpoint() {
+    local size="${1:-$(halo_memory_size)}"
+    if [[ "$size" == "96" ]]; then
+        printf '%s\n' "$HF_HT43_CHECKPOINT_FILE"
+    else
+        printf '%s\n' "$HF_CHECKPOINT_FILE"
+    fi
+}
+
+# selected_checkpoint [config-value] [models-dir] [memory-size]
 # The base name of the checkpoint this deployment actually runs. A set
-# HALOGEN_CHECKPOINT decides it. Unset, this mirrors the engine's own
-# auto-detect: a volume holding w4b and not v2 keeps serving w4b and
-# downloads nothing, so w4b is the honest answer there; every other case
-# runs v2, the engine's default since 0.15.0.
+# HALOGEN_CHECKPOINT decides it. Unset, a 96 GB machine runs ht43; otherwise
+# this mirrors the engine's own auto-detect: a volume holding w4b and not v2
+# keeps serving w4b and downloads nothing, so w4b is the honest answer there;
+# every other case runs v2, the engine's default since 0.15.0.
 selected_checkpoint() {
     local cp="${1:-${HALOGEN_CHECKPOINT:-}}"
     local dir="${2:-${MODELS_DIR:-}}"
+    local size="${3:-$(halo_memory_size)}"
     if [[ -n "$cp" ]]; then
         printf '%s\n' "$(basename "$cp")"
+        return 0
+    fi
+    if [[ "$size" == "96" ]]; then
+        printf '%s\n' "$HF_HT43_CHECKPOINT_FILE"
         return 0
     fi
     if [[ -n "$dir" && -f "$dir/$HF_LEGACY_CHECKPOINT_FILE" \
@@ -497,25 +572,38 @@ quant_is_legacy() {
 }
 
 # quant_files <base-name> — the .hgn files that quant needs, one per line.
-# w4b is two files (the checkpoint and its quality sidecar); v2 is one file
-# plus its lookup table.
+# w4b is two files (the checkpoint and its quality sidecar); v2 and ht43 are
+# one checkpoint each plus the lookup table they share.
 quant_files() {
-    if quant_is_legacy "$1"; then
-        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
-    else
-        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
-    fi
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE")
+            printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+            ;;
+        "$HF_HT43_CHECKPOINT_FILE")
+            printf '%s\n' "$HF_HT43_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+            ;;
+        *)
+            printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+            ;;
+    esac
 }
 
 # other_quant_files <base-name> — the .hgn files belonging to the quant this
 # deployment does NOT run. Excluded from every download so one switch never
-# pulls both generations (~170 GiB) when only ~110 GiB is wanted.
+# pulls every checkpoint when only one is wanted. The lookup table is shared
+# by v2 and ht43, so it is excluded only for w4b, which does not read it.
 other_quant_files() {
-    if quant_is_legacy "$1"; then
-        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
-    else
-        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
-    fi
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE")
+            printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_HT43_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+            ;;
+        "$HF_HT43_CHECKPOINT_FILE")
+            printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+            ;;
+        *)
+            printf '%s\n' "$HF_HT43_CHECKPOINT_FILE" "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+            ;;
+    esac
 }
 
 # quant_floor_gib <file-name> — the local size floor in GiB, used only when
@@ -525,27 +613,52 @@ quant_floor_gib() {
     case "$1" in
         "$HF_LEGACY_CHECKPOINT_FILE") printf '110\n' ;;
         "$HF_CHECKPOINT_FILE")        printf '55\n'  ;;
-        "$HF_NGRAM_FILE")            printf '42\n'  ;;
-        "$HF_LEGACY_OVERLAY_FILE")   printf '2\n'   ;;
-        *)                           printf '0\n'   ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '50\n'  ;;
+        "$HF_NGRAM_FILE")             printf '42\n'  ;;
+        "$HF_LEGACY_OVERLAY_FILE")    printf '2\n'   ;;
+        *)                            printf '0\n'   ;;
     esac
 }
 
-# v2_installed [models-dir] — true when the v2 checkpoint is on disk and
-# big enough to be a real file. The floor matters: a truncated or zero-byte
-# v2 is not "already downloaded", and calling it that would skip a download
-# that is genuinely needed. A volume holding both quants uses this to tell
-# a real v2 from a half-written one. Apparent size (stat %s), not disk
-# usage, so a sparse file measures correctly.
-v2_installed() {
-    local dir="${1:-${MODELS_DIR:-}}"
-    local file size floor
-    [[ -n "$dir" && -f "$dir/$HF_CHECKPOINT_FILE" ]] || return 1
-    file="$dir/$HF_CHECKPOINT_FILE"
-    size="$(stat -c '%s' "$file" 2>/dev/null || echo "")"
+# quant_download_gib <base-name> — the download this model needs on a fresh
+# volume, in GiB, for prompts.
+quant_download_gib() {
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE") printf '118\n' ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '102\n' ;;
+        *)                            printf '110\n' ;;
+    esac
+}
+
+# quant_label <base-name> — the model name to show the user.
+quant_label() {
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE") printf 'old model (w4b)\n' ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '96 GB model (ht43)\n' ;;
+        "$HF_CHECKPOINT_FILE")        printf 'full model (v2)\n' ;;
+        *)                            printf 'model (%s)\n' "$(basename "$1")" ;;
+    esac
+}
+
+# checkpoint_installed <file-name> [models-dir] — true when the named
+# checkpoint is on disk and big enough to be a real file. The floor matters:
+# a truncated or zero-byte file is not "already downloaded", and calling it
+# that would skip a download that is genuinely needed. Apparent size (stat
+# %s), not disk usage, so a sparse file measures correctly.
+checkpoint_installed() {
+    local base="$1" dir="${2:-${MODELS_DIR:-}}" path size floor
+    [[ -n "$dir" && -f "$dir/$base" ]] || return 1
+    path="$dir/$base"
+    size="$(stat -c '%s' "$path" 2>/dev/null || echo "")"
     [[ "$size" =~ ^[0-9]+$ ]] || return 1
-    floor="$(quant_floor_gib "$HF_CHECKPOINT_FILE")"
+    floor="$(quant_floor_gib "$base")"
     (( size >= floor * 1073741824 ))
+}
+
+# v2_installed [models-dir] — the v2 checkpoint specifically, for the
+# existing w4b migration path.
+v2_installed() {
+    checkpoint_installed "$HF_CHECKPOINT_FILE" "${1:-${MODELS_DIR:-}}"
 }
 
 # checkpoint_host_path <container-path> <models-dir> — the host file behind
@@ -741,9 +854,9 @@ weights_check() {
 
 # hf_download_excludes [vision 0|1] [checkpoint-base-name]
 # Prints, one per line, the weights-repo files this deployment does not need:
-#   - the files of the quant generation this deployment does not run, so a
-#     v2 volume never pulls w4b and its sidecar (~118 GiB) and a w4b
-#     volume never pulls v2 and its lookup table (~110 GiB)
+#   - the other checkpoint, so a v2 volume never pulls ht43 or w4b and an
+#     ht43 volume never pulls v2 or w4b
+#   - the shared lookup table only for w4b, which does not read it
 #   - the vision sidecar, unless vision is enabled (0.84 GiB)
 #   - the speed overlay, which only HALOGEN_CK_OVERLAY names (2.5 GiB)
 #   - the MTP head, which only a GGUF trunk reads — the .hgn checkpoint

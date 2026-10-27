@@ -11,11 +11,12 @@ ships as a single prebuilt image,
 configured by environment variables read once at startup; the full list with
 defaults is its [docs/FLAGS.md](https://github.com/peonist-ai/halogen-flash-server/blob/main/docs/FLAGS.md).
 
-One image serves one checkpoint. The current one is
-`qwen38-flash-next-v2.hgn` (62 GiB) with its lookup table
-`qwen38-flash-next-ngram.hgn` (48 GiB) beside it — about 110 GiB together,
-plus a tokenizer. `HALOGEN_CHECKPOINT` names the file the engine loads, and
-setup writes the v2 path into `config.env`. The 0.14 quant,
+One image serves one of two checkpoints. A 128 GB machine runs
+`qwen38-flash-next-v2.hgn` (62 GiB); a 96 GB machine runs
+`qwen38-flash-next-ht43.hgn` (54 GiB), the smaller checkpoint added in engine
+0.16. Both use the same lookup table, `qwen38-flash-next-ngram.hgn` (48 GiB),
+and a tokenizer. `HALOGEN_CHECKPOINT` names the file the engine loads, and
+setup writes the path for the machine it detects. The 0.14 quant,
 `qwen38-flash-next-w4b.hgn` with its 2.4 GiB quality sidecar, is deprecated
 upstream since engine 0.16.2; `refresh.sh` offers to replace it with v2 on a
 volume that still holds it.
@@ -43,10 +44,10 @@ container starts serving instead of downloading.
 4. **Kernel** — the engine needs **kernel 7.0+** (the read-only registration of
    the checkpoint is refused on 6.x). On Ubuntu setup offers to install the HWE
    kernel.
-5. **Kernel params** — checks the boot command line against the set halogen was
-   measured on and offers to add what is missing, using `grubby`, systemd-boot,
-   or GRUB. Setup backs up the file it edits and confirms the params landed;
-   they take effect at the next boot.
+5. **Kernel params** — checks the boot command line against the pair for this
+   machine's memory size and offers to add what is missing, using `grubby`,
+   systemd-boot, or GRUB. Setup backs up the file it edits and confirms the
+   params landed; they take effect at the next boot.
 6. **Reboot gate** — when step 3 or 4 changed something, setup stops here so one
    reboot covers the new group memberships, the new kernel, and any new params
    together. With only new params, setup carries on and asks for the reboot at
@@ -63,8 +64,9 @@ container starts serving instead of downloading.
    the same prompt is offered as a space reclaim only — declining leaves
    both weights in place and the server on v2. The vision sidecar and the
    tokenizer are always kept; both quants use them.
-10. **Disk check** — the weights are ~110 GiB; setup stops under 130 GiB
-    free when a download is actually needed.
+10. **Disk check** — the model is ~110 GiB (v2) or ~102 GiB (ht43); setup
+    stops under 130 GiB or 120 GiB free, respectively, when a download is
+    actually needed.
 11. **Write config.env** — before anything is downloaded.
 12. **Fetch phase** — offers to `podman pull` the image, then the weights.
     Arrived files are checked by exact byte size against the repo's live
@@ -75,6 +77,10 @@ config is written, the only change is any bootloader edit you approved — run
 `./setup.sh` again to complete setup. After it is written, the message says the
 config was saved. An interrupted weights download resumes when you re-run
 `./setup.sh` or `./run.sh`.
+
+**Memory size:** setup reads `MemTotal` plus the iGPU carve-out and selects v2
+on a 128 GB machine or ht43 on a 96 GB one. A machine below 96 GB stops setup;
+neither model fits.
 
 ## config.env reference
 
@@ -108,15 +114,18 @@ HALOGEN_KV_SLOTS=4
 HALOGEN_VISION_TOWER=1
 ```
 
+A 96 GB machine gets `/models/qwen38-flash-next-ht43.hgn` for
+`HALOGEN_CHECKPOINT` instead.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. A LAN server is reachable by everyone on the network, which is what the API key is for — setup offers one on both bindings. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
-| `MODELS_DIR` | `~/models/halogen-models` | Where the weights (~110 GiB) live and download into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
+| `MODELS_DIR` | `~/models/halogen-models` | Where the model (~110 GiB for v2, ~102 GiB for ht43) lives and downloads into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
-| `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
+| `HALOGEN_CHECKPOINT` | set by setup: v2 on 128 GB, ht43 on 96 GB | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the path for the machine's memory size. The scripts read the base name to decide which files to check and which to leave out of a download, so one model never pulls another. Unset, the engine picks its own default. |
 | `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `hl-gn-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
@@ -148,6 +157,9 @@ podman run --rm --name halogen-flash \
   ghcr.io/peonist-ai/halogen-flash-server:0.18.16
 ```
 
+On a 96 GB machine, `HALOGEN_CHECKPOINT` is
+`/models/qwen38-flash-next-ht43.hgn`.
+
 - **`--ipc=host` is load-bearing**: without it the GPU runtime dies during
   startup, and no `shm_size` substitutes. This is measured, not folklore —
   see the image's `docker-compose.yml` comments.
@@ -169,13 +181,25 @@ repo's live byte sizes.
 
 The engine runs on the amdgpu/KFD stack and its memory design depends on it:
 the checkpoint is mapped and registered with the GPU in place, never copied.
-The command line this repo recommends (validated on a 128 GiB machine):
+The command line this repo recommends is below. setup.sh picks the pair from
+the machine's memory size: 120 GiB on a 128 GB machine, 88 GiB on a 96 GB
+machine.
 
 | Parameter | What it does |
 |---|---|
 | `amd_iommu=off` | Disables AMD IOMMU. Worth 13-16% of prefill. **Breaks NPU and DMA isolation.** |
-| `ttm.pages_limit=31457280` | Max 4 KiB pages the GPU can pin — the 120 GiB GTT ceiling. **A size, not a constant; tuned to a 128 GiB machine.** |
-| `amdgpu.gttsize=122880` | GTT size in MiB (120 GiB), set to match the pages_limit ceiling. |
+| `ttm.pages_limit` | Max 4 KiB pages the GPU can pin — the GTT ceiling. **A size, not a constant; it scales with installed memory.** |
+| `amdgpu.gttsize` | GTT size in MiB, set to match the pages_limit ceiling. |
+
+| Machine | `ttm.pages_limit` | `amdgpu.gttsize` |
+|---|---|---|
+| 128 GB | `31457280` (120 GiB) | `122880` |
+| 96 GB | `23068672` (88 GiB) | `90112` |
+
+setup.sh reads `MemTotal` plus the iGPU carve-out from
+`mem_info_vram_total` to tell the two sizes apart. The 128 GB pair is
+validated on this repo's reference machine; the 96 GB pair keeps the same
+8 GiB gap below the installed memory.
 
 All of these **require a reboot** — they're read once at boot. `setup.sh` checks
 your values and offers to add what is missing: it backs up the bootloader file
@@ -204,12 +228,12 @@ The weights are fetched with the engine's own command,
 image's bundled `hf` (`podman run --entrypoint /usr/local/bin/hf`, which needs
 no GPU devices). A resumable `curl` fetch covers a host with none of those.
 
-The download includes only the files the configuration uses: the checkpoint
-this deployment runs and its lookup table, the vision sidecar when vision is
+The download includes only the files the configuration uses: the selected
+checkpoint and the lookup table it shares, the vision sidecar when vision is
 on, and the tokenizer. It skips the speed overlay and the MTP head, which
-this deployment does not use, and it skips the files of the quant generation
-this deployment does not run — so switching to v2 never pulls w4b's 118 GiB
-along with it.
+this deployment does not use, and it skips the other checkpoint and the w4b
+files — so a 96 GB machine never pulls v2's 62 GiB beside ht43, and a v2
+download never pulls ht43 or w4b's 118 GiB.
 
 `setup.sh` offers the download after it writes the config; `run.sh` offers it
 when its pre-flight finds a file missing or the wrong size. Both resume from
@@ -217,8 +241,8 @@ when its pre-flight finds a file missing or the wrong size. Both resume from
 
 ## Weights integrity
 
-The checkpoint is ~62 GiB and the single most expensive thing on disk, so
-every layer of this repo checks it:
+The v2 checkpoint (~62 GiB) and ht43 (~54 GiB) are the most expensive things on
+disk, so every layer of this repo checks them:
 
 1. **Live remote hash** (setup and refresh): the repo's tree API
    (`huggingface.co/api/models/…/tree/main`) lists the sha256 of every LFS
@@ -240,8 +264,8 @@ every layer of this repo checks it:
    size, so a truncated or partial file is caught without any hashing.
    `setup.sh` compares against the live listing on every run; `run.sh`
    consults it when its local size pass flags a problem. Both offer to
-   re-download what fails. With the repo unreachable, the checkpoint is judged
-   against its ~110 GiB floor.
+   re-download what fails. With the repo unreachable, each file is judged
+   against its local size floor (55 GiB for v2, 50 GiB for ht43).
 3. **Offline fallback**: with the repo unreachable, refresh.sh falls back to
    config's pinned hash, or a hash it recorded once into
    `<MODELS_DIR>/checkpoint.sha256`, or the size check alone.
@@ -274,7 +298,8 @@ After `git pull`, `./refresh.sh`:
 3. **Quant switch** — when the pinned image is 0.15.0 or newer and the volume
    still holds the deprecated w4b checkpoint, one prompt offers to move to
    v2: stop the server, delete the w4b files, and download v2 and its lookup
-   table in their place. The prompt defaults to **no**; declining changes
+   table in their place. This is the 128 GB path; a 96 GB machine selects
+   ht43 at setup. The prompt defaults to **no**; declining changes
    nothing. The vision sidecar and the tokenizer are kept — both quants use
    them. `config.env` is rewritten **before** anything is deleted, so an
    interrupted transfer leaves the config pointing at v2 and every repair

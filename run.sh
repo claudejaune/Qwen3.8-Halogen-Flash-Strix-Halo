@@ -93,10 +93,11 @@ VISION_FLAG=0
 if [[ "${HALOGEN_VISION_TOWER:-}" == "1" ]]; then
     VISION_FLAG=1
 fi
-# Which quant this start runs. Unset HALOGEN_CHECKPOINT means v2, the
-# engine's own default; the pre-flight checks and any download follow that
-# choice so a v2 start is never measured against w4b's files.
+# Which model this start runs. Unset HALOGEN_CHECKPOINT means the size-based
+# default (ht43 on a 96 GB machine, v2 otherwise); the pre-flight checks and
+# any download follow that choice.
 CK_BASE="$(selected_checkpoint)"
+DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
 if (( WEIGHTS_RC != 0 )); then
@@ -112,7 +113,7 @@ if (( WEIGHTS_RC != 0 )); then
     echo "  HALOGEN_DOWNLOAD fetches a MISSING checkpoint on start, but it"
     echo "  never repairs a file that is present and the wrong size."
     echo ""
-    if ask_yes_no "  Download / repair the weights now (~110 GiB)?" y; then
+    if ask_yes_no "  Download / repair the weights now (~${DOWNLOAD_GIB} GiB)?" y; then
         if have podman && ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
             info "Pulling the image first (its own 'hf' does the download)..."
             podman pull "$HALOGEN_IMAGE" || warn "Image pull failed."
@@ -245,7 +246,7 @@ echo "============================================"
 echo ""
 echo "  Image:      $(image_display "$HALOGEN_IMAGE")"
 echo "  Weights:    $MODELS_DIR"
-echo "  Checkpoint: $CK_BASE"
+echo "  Model:      $(quant_label "$CK_BASE")"
 echo "  Slots:      ${HALOGEN_KV_SLOTS:-4 (default)}"
 echo "  Vision:     $([[ "${HALOGEN_VISION_TOWER:-}" == "1" ]] && echo on || echo off)"
 echo ""
@@ -267,7 +268,7 @@ if (( WEIGHTS_RC == 0 )); then
 echo "  The weights are in place; loading them takes minutes on a cold start."
 echo "  The download is skipped whenever the files are complete."
 else
-echo "  The weights are not complete: this start downloads them (~110 GiB,"
+echo "  The weights are not complete: this start downloads them (~${DOWNLOAD_GIB} GiB,"
 echo "  resumes if interrupted) and then loads them for minutes."
 fi
 echo ""

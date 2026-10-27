@@ -90,8 +90,9 @@ fi
 echo ""
 
 # The checkpoint this deployment runs, as a base name. Unset
-# HALOGEN_CHECKPOINT means v2. Everything below that touches the weights
-# follows this value, and the quant switch updates it in place.
+# HALOGEN_CHECKPOINT means the size-based default (ht43 on a 96 GB machine,
+# v2 otherwise). Everything below that touches the weights follows this value,
+# and the quant switch updates it in place.
 CK_BASE="$(selected_checkpoint)"
 CK_PATH="$MODELS_DIR/$CK_BASE"
 
@@ -534,7 +535,8 @@ verify_checkpoint() {
 offer_update_flow() {
     local new_sha="$1"
     local -a doomed=()
-    local f
+    local f download_gib
+    download_gib="$(quant_download_gib "$CK_BASE")"
 
     while read -r f; do
         if [[ -n "$f" ]]; then
@@ -546,7 +548,7 @@ offer_update_flow() {
     for f in "${doomed[@]}"; do
         echo "    $f"
     done
-    echo "  Halogen Flash can't run until the new model (~110 GiB) finishes downloading."
+    echo "  Halogen Flash can't run until the new model (~${download_gib} GiB) finishes downloading."
     if ! ask_yes_no "  Update now?" n; then
         echo "  Keeping the current model (nothing deleted or downloaded). Run ./refresh.sh to update later."
         return 0
@@ -566,7 +568,7 @@ offer_update_flow() {
         fi
     fi
     echo ""
-    echo "  Downloading the current weights (~110 GiB, resumable)..."
+    echo "  Downloading the current weights (~${download_gib} GiB, resumable)..."
     if hf_download_models "$MODELS_DIR" "$HALOGEN_IMAGE" "$VISION_FLAG" "$CK_BASE"; then
         ok "Download finished."
     else
@@ -613,10 +615,11 @@ list_weights_problem() {
 # downloads the set, and re-checks it. Declining leaves the deployment
 # unable to run, which is said plainly. READY carries the outcome.
 offer_weights_download() {
-    local details="$1" name detail
+    local details="$1" name detail download_gib
+    download_gib="$(quant_download_gib "$CK_BASE")"
     list_weights_problem "$details"
     echo ""
-    if ! ask_yes_no "  Download now? (~110 GiB, resumes if interrupted)" y; then
+    if ! ask_yes_no "  Download now? (~${download_gib} GiB, resumes if interrupted)" y; then
         READY=0
         echo ""
         echo "  Halogen Flash can't run without the model. Run ./refresh.sh again to download it."
@@ -841,7 +844,7 @@ else
 fi
 echo "============================================"
 echo "  Image:      $(image_display "$HALOGEN_IMAGE")"
-echo "  Checkpoint: $CK_BASE"
+echo "  Model:      $(quant_label "$CK_BASE")"
 if (( ${FREED_BYTES:-0} > 0 )); then
     echo "  Freed:      $(bytes_gib "$FREED_BYTES") GiB of older versions"
 fi
