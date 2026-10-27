@@ -97,6 +97,7 @@ fi
 # default (ht43 on a 96 GB machine, v2 otherwise); the pre-flight checks and
 # any download follow that choice.
 CK_BASE="$(selected_checkpoint)"
+HALOGEN_CHECKPOINT="${HALOGEN_CHECKPOINT:-/models/$CK_BASE}"
 DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
@@ -176,8 +177,9 @@ if [[ -n "${HALOGEN_MODEL_ID:-}" ]]; then
 fi
 
 # Which checkpoint the engine loads, as a path inside the container's
-# /models volume. Unset passes nothing, and the engine picks its own
-# default (v2 on a fresh volume, or the w4b it finds on an older one).
+# /models volume. run.sh defaults this to the checkpoint it just checked, so
+# the engine never falls back to its own default (v2 or w4b) on a 96 GB
+# machine.
 if [[ -n "${HALOGEN_CHECKPOINT:-}" ]]; then
     CMD+=(-e "HALOGEN_CHECKPOINT=$HALOGEN_CHECKPOINT")
 fi
