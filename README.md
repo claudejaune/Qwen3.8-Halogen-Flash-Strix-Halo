@@ -12,6 +12,8 @@ So we made a set of convenience scripts for running Qwen3.8-Flash-Next on a sing
 
 ## Quick start
 
+> These instructions apply to 128 GB Strix Halo. If you have the 96 GB version, see [README-96GB.md](README-96GB.md) (experimental).
+
 ### Prerequisites
 
 - AMD Strix Halo with 128 GB RAM
