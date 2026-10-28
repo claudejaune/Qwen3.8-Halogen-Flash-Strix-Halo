@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.3.1 - 2026-10-28
+
+- Pin the default Halogen Flash version to `0.18.17` in `setup.sh` and `refresh.sh`
+
 ## 1.3.0 - 2026-10-26
 
 - `refresh.sh` offers to delete older Halogen Flash versions and says how much space they'll free up

@@ -23,7 +23,7 @@ CONFIG_ALLOWED_KEYS=(
 # for the version this repo ships: setup.sh writes it into a new config.env,
 # and refresh.sh offers it to an existing one.
 HALOGEN_IMAGE_REPO="ghcr.io/peonist-ai/halogen-flash-server"
-HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.18.16"
+HALOGEN_RECOMMENDED_IMAGE="$HALOGEN_IMAGE_REPO:0.18.17"
 
 # The Hugging Face repo the engine's checkpoint ships in. The tree API lists
 # every file with its sha256 (the LFS "oid"), which is what
@@ -394,7 +394,7 @@ podman_container_running() {
 }
 
 # normalize_image <value>
-# Turns what a user types into a full image reference. A bare tag (0.18.16,
+# Turns what a user types into a full image reference. A bare tag (0.18.17,
 # latest), a :tag, or a complete reference all work.
 normalize_image() {
     local value="$1"
@@ -500,7 +500,7 @@ resolve_moving_tag() {
 
 # image_display <image-ref> — a reference for a report line. A version tag is
 # already the answer; a moving tag gains the version of the image on disk:
-# `ghcr.io/…:latest (v0.18.16)`. Nothing is fetched to find it.
+# `ghcr.io/…:latest (v0.18.17)`. Nothing is fetched to find it.
 image_display() {
     local ref="$1" ver=""
     [[ "${ref##*:}" =~ ^[0-9] ]] || ver="$(image_version_local "$ref")" || ver=""

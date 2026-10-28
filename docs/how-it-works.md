@@ -108,7 +108,7 @@ PORT=8731
 MODELS_DIR=/home/you/models/halogen-models
 
 # Engine
-HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.18.16
+HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.18.17
 HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn
 HALOGEN_KV_SLOTS=4
 HALOGEN_VISION_TOWER=1
@@ -154,7 +154,7 @@ podman run --rm --name halogen-flash \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
   [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.16
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.17
 ```
 
 On a 96 GB machine, `HALOGEN_CHECKPOINT` is
@@ -286,10 +286,10 @@ After `git pull`, `./refresh.sh`:
 1. Turns a `latest` pin into the exact version it points at and writes that
    version to `config.env`, so every message names a number. Then compares the
    version in `config.env` with the one this repo ships: a newer one stays put,
-   an equal one is confirmed, and an older one asks **Upgrade to v0.18.16?** —
+   an equal one is confirmed, and an older one asks **Upgrade to v0.18.17?** —
    yes takes it, no stays put. The prompt accepts only yes or no; a typed
    version is rejected and the question repeats. Another version is set with
-   `./refresh.sh --image 0.16.2`, which expands a bare tag such as `0.18.16` or
+   `./refresh.sh --image 0.16.2`, which expands a bare tag such as `0.18.17` or
    `:latest` to a full reference. Naming a version older than the one in use
    asks **Downgrade to v0.16.2?** first, and the default is no. `config.env` is
    backed up to `backups/` first
