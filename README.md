@@ -65,7 +65,7 @@ To update to a specific Halogen Flash version (e.g., to try versions newer than 
 
 ```bash
 git pull
-./refresh.sh --image 0.18.16
+./refresh.sh --image 0.18.17
 ```
 
 You can also pull the latest Halogen Flash version offered by upstream:
