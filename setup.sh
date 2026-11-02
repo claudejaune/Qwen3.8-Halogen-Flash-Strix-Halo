@@ -62,12 +62,14 @@ CHECKPOINT_FILE="$HF_CHECKPOINT_FILE"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 DISK_MIN_GIB=130
 HALOGEN_KV8=0
+MODEL_FOLDER_LABEL="model"
 if [[ "$LOWVRAM" == "true" ]]; then
     # The low VRAM model holds about 8 GiB less in memory than v2, and the
     # 8-bit KV cache nearly halves the attention cache on top of that.
     CHECKPOINT_FILE="$HF_HT43_CHECKPOINT_FILE"
     DISK_MIN_GIB=120
     HALOGEN_KV8=1
+    MODEL_FOLDER_LABEL="low VRAM model"
 fi
 QUANT_DOWNLOAD_GIB="$(quant_download_gib "$CHECKPOINT_FILE")"
 
@@ -678,7 +680,7 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Folder for the model (about ${QUANT_DOWNLOAD_GIB} GiB). Press Enter for the default: $THIS_DEFAULT"
+    echo "  Folder for the ${MODEL_FOLDER_LABEL} (about ${QUANT_DOWNLOAD_GIB} GiB). Press Enter for the default: $THIS_DEFAULT"
     echo "  It must be an absolute path"
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
     FALLBACK_DEFAULT=false
@@ -987,7 +989,13 @@ else
         echo "  Using the low VRAM model (ht43) and the 8-bit KV cache."
         echo ""
     fi
-    if ask_yes_no "  Download the weights now (~${QUANT_DOWNLOAD_GIB} GiB)?" y; then
+    # Quote what this download actually fetches: files already on disk at the
+    # right size (the shared lookup table, the vision sidecar) are not in it.
+    REMAINING_GIB="$(weights_remaining_gib "$MODELS_DIR" "$VISION_FLAG" "$CHECKPOINT_FILE")"
+    if (( REMAINING_GIB == 0 )); then
+        REMAINING_GIB="$QUANT_DOWNLOAD_GIB"
+    fi
+    if ask_yes_no "  Download the weights now (~${REMAINING_GIB} GiB)?" y; then
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
@@ -1089,7 +1097,11 @@ echo ""
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Start the server with ./run.sh. The first start takes a few minutes."
 else
-echo "  Run ./run.sh to download the model (~${QUANT_DOWNLOAD_GIB} GiB)."
+SUMMARY_REMAINING="$(weights_remaining_gib "$MODELS_DIR" "$VISION_FLAG" "$CHECKPOINT_FILE")"
+if (( SUMMARY_REMAINING == 0 )); then
+SUMMARY_REMAINING="$QUANT_DOWNLOAD_GIB"
+fi
+echo "  Run ./run.sh to download the model (~${SUMMARY_REMAINING} GiB)."
 fi
 echo ""
 

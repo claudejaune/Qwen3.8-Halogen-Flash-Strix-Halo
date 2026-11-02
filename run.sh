@@ -129,6 +129,12 @@ if (( WEIGHTS_RC != 0 )); then
     echo "  HALOGEN_DOWNLOAD fetches a MISSING checkpoint on start, but it"
     echo "  never repairs a file that is present and the wrong size."
     echo ""
+    # Quote what this download actually fetches: files already on disk at the
+    # right size (the shared lookup table, the vision sidecar) are not in it.
+    DOWNLOAD_GIB="$(weights_remaining_gib "$MODELS_DIR" "$VISION_FLAG" "$CK_BASE")"
+    if (( DOWNLOAD_GIB == 0 )); then
+        DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
+    fi
     if ask_yes_no "  Download / repair the weights now (~${DOWNLOAD_GIB} GiB)?" y; then
         if have podman && ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
             info "Pulling the image first (its own 'hf' does the download)..."
@@ -140,6 +146,10 @@ if (( WEIGHTS_RC != 0 )); then
             if (( WEIGHTS_RC == 0 )); then
                 ok "Weights ready."
             else
+                DOWNLOAD_GIB="$(weights_remaining_gib "$MODELS_DIR" "$VISION_FLAG" "$CK_BASE")"
+                if (( DOWNLOAD_GIB == 0 )); then
+                    DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
+                fi
                 warn "The download finished but the check still reports a problem."
                 warn "The engine may fail; re-run ./run.sh to resume, or ./refresh.sh."
             fi

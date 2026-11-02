@@ -551,6 +551,62 @@ quant_download_gib() {
     esac
 }
 
+# quant_expected_gib <file-name> — the file's published size in GiB, used
+# only as the offline estimate by weights_remaining_gib. The repo's live
+# listing wins whenever it is reachable.
+quant_expected_gib() {
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE") printf '110\n' ;;
+        "$HF_CHECKPOINT_FILE")        printf '62\n'  ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '54\n'  ;;
+        "$HF_NGRAM_FILE")             printf '48\n'  ;;
+        "$HF_LEGACY_OVERLAY_FILE")    printf '3\n'   ;;
+        "$HF_VISION_FILE")            printf '1\n'   ;;
+        *)                            printf '0\n'   ;;
+    esac
+}
+
+# weights_remaining_gib <models-dir> <vision 0|1> <checkpoint-base-name>
+# The GiB a download would actually fetch, rounded up to whole GiB: every
+# missing file at its full size, every present-but-short file by its
+# missing part, every complete file not at all. Sizes come from the repo's
+# live listing when reachable, from quant_expected_gib otherwise. Tokenizer
+# files are a few MB and never counted. Callers use this for download
+# prompts so a volume that already holds the shared lookup table (or the
+# vision sidecar) is never quoted the full download again.
+weights_remaining_gib() {
+    local dir="$1" vision="${2:-0}" ck="${3:-$HF_CHECKPOINT_FILE}"
+    local table f path actual expected remaining=0
+    table="$(hf_remote_table 2>/dev/null)" || table=""
+    local -a files=()
+    local qf
+    while read -r qf; do
+        if [[ -n "$qf" ]]; then
+            files+=("$qf")
+        fi
+    done < <(quant_files "$ck")
+    if [[ "$vision" == "1" ]]; then
+        files+=("$HF_VISION_FILE")
+    fi
+    for f in "${files[@]}"; do
+        path="$dir/$f"
+        expected="$(awk -v f="$f" '$1 == f {print $3; exit}' <<<"$table")"
+        if [[ ! "$expected" =~ ^[0-9]+$ ]]; then
+            expected=$(( $(quant_expected_gib "$f") * 1073741824 ))
+        fi
+        if [[ -f "$path" ]]; then
+            actual="$(stat -c '%s' "$path" 2>/dev/null || echo 0)"
+            [[ "$actual" =~ ^[0-9]+$ ]] || actual=0
+            if (( actual < expected )); then
+                remaining=$(( remaining + expected - actual ))
+            fi
+        else
+            remaining=$(( remaining + expected ))
+        fi
+    done
+    printf '%s\n' $(( (remaining + 1073741823) / 1073741824 ))
+}
+
 # v2_installed [models-dir] — true when the v2 checkpoint is on disk and
 # big enough to be a real file. The floor matters: a truncated or zero-byte
 # v2 is not "already downloaded", and calling it that would skip a download
