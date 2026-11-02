@@ -140,7 +140,7 @@ if (( WEIGHTS_RC != 0 )); then
     if (( DOWNLOAD_GIB == 0 )); then
         DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
     fi
-    if ask_yes_no "  Download / repair the weights now (~${DOWNLOAD_GIB} GiB)?" y; then
+    if ask_yes_no "  Download / repair the missing weights now (~${DOWNLOAD_GIB} GiB)?" y; then
         if have podman && ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
             info "Pulling the image first (its own 'hf' does the download)..."
             podman pull "$HALOGEN_IMAGE" || warn "Image pull failed."

@@ -1000,7 +1000,7 @@ else
     if (( REMAINING_GIB == 0 )); then
         REMAINING_GIB="$QUANT_DOWNLOAD_GIB"
     fi
-    if ask_yes_no "  Download the weights now (~${REMAINING_GIB} GiB)?" y; then
+    if ask_yes_no "  Download the missing weights now (~${REMAINING_GIB} GiB)?" y; then
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
