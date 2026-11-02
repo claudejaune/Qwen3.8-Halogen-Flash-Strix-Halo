@@ -2,8 +2,9 @@
 # run.sh — Start Qwen3.8-Flash-Next via halogen-flash-server using config.env.
 # Runs in the foreground. Use stop.sh from another terminal to stop it.
 #
-# Usage: ./run.sh [--log]
-#   --log   also save everything the engine prints to logs/run-<timestamp>.log
+# Usage: ./run.sh [--log] [--lowvram]
+#   --log      also save everything the engine prints to logs/run-<timestamp>.log
+#   --lowvram  use the 8-bit KV cache for this start, whatever model is configured
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,12 +16,16 @@ DEFAULT_MODELS_DIR="$HOME/models/halogen-models"
 # ── Flags ────────────────────────────────────────────────────────────────────
 # --log duplicates everything the engine prints into logs/. Off by default:
 # engine output is large and a normal start needs no record of it.
+# --lowvram forces the 8-bit KV cache for this start. It never changes the
+# model — the one in config.env keeps running.
 LOG=false
+LOWVRAM=false
 for arg in "$@"; do
     case "$arg" in
         --log) LOG=true ;;
+        --lowvram) LOWVRAM=true ;;
         *)
-            echo "Error: unknown option: $arg (usage: ./run.sh [--log])" >&2
+            echo "Error: unknown option: $arg (usage: ./run.sh [--log] [--lowvram])" >&2
             exit 1
             ;;
     esac
@@ -46,7 +51,7 @@ for var in BIND_HOST PORT HALOGEN_IMAGE; do
 done
 
 # Numeric vars — a hand-edited config must not pass garbage to the engine
-for var in PORT HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS HALOGEN_CTX; do
+for var in PORT HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS HALOGEN_CTX HALOGEN_KV8; do
     val="${!var:-}"
     if [[ -n "$val" && ! "$val" =~ ^[0-9]+$ ]]; then
         echo "Error: $var must be a number, got '$val' in config.env." >&2
@@ -99,6 +104,17 @@ fi
 CK_BASE="$(selected_checkpoint)"
 HALOGEN_CHECKPOINT="${HALOGEN_CHECKPOINT:-/models/$CK_BASE}"
 DOWNLOAD_GIB="$(quant_download_gib "$CK_BASE")"
+
+# The 8-bit KV cache is on by default on this branch. HALOGEN_KV8=0 in
+# config.env turns it off; --lowvram forces it on for this start, whatever
+# model is configured.
+KV8_ON=true
+if [[ "${HALOGEN_KV8:-}" == "0" ]]; then
+    KV8_ON=false
+fi
+if [[ "$LOWVRAM" == "true" ]]; then
+    KV8_ON=true
+fi
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
 if (( WEIGHTS_RC != 0 )); then
@@ -166,6 +182,9 @@ CMD+=(-v "$MODELS_DIR:/models")
 
 # Engine configuration from config.env (unset keys use the image's defaults)
 CMD+=(-e "HALOGEN_KV_SLOTS=${HALOGEN_KV_SLOTS:-4}")
+if [[ "$KV8_ON" == "true" ]]; then
+    CMD+=(-e "HALOGEN_KV8=1")
+fi
 if [[ -n "${HALOGEN_KV_POOL_POSITIONS:-}" ]]; then
     CMD+=(-e "HALOGEN_KV_POOL_POSITIONS=$HALOGEN_KV_POOL_POSITIONS")
 fi
@@ -222,6 +241,11 @@ if [[ -n "${HALOGEN_EXTRA_ENV:-}" ]]; then
     done
 fi
 
+# The two cannot be combined: the server refuses to start and names both.
+if [[ "$KV8_ON" == "true" && "${HALOGEN_EXTRA_ENV:-}" == *HALOGEN_COMPOSABLE_CONTEXT=1* ]]; then
+    warn "The 8-bit KV cache and HALOGEN_COMPOSABLE_CONTEXT=1 cannot be combined. Halogen Flash will refuse to start."
+fi
+
 CMD+=("$HALOGEN_IMAGE")
 
 # Pull the image if it is not here yet
@@ -251,6 +275,11 @@ echo "  Weights:    $MODELS_DIR"
 echo "  Model:      $(quant_label "$CK_BASE")"
 echo "  Slots:      ${HALOGEN_KV_SLOTS:-4 (default)}"
 echo "  Vision:     $([[ "${HALOGEN_VISION_TOWER:-}" == "1" ]] && echo on || echo off)"
+if [[ "$KV8_ON" == "true" ]]; then
+echo "  KV cache:   8-bit"
+else
+echo "  KV cache:   16-bit"
+fi
 echo ""
 echo "  Endpoint:  http://$DISPLAY_HOST:$PORT/v1/chat/completions"
 echo "  Health:    http://$DISPLAY_HOST:$PORT/health"

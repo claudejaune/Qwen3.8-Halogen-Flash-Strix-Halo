@@ -80,7 +80,8 @@ config was saved. An interrupted weights download resumes when you re-run
 
 **Memory size:** setup reads `MemTotal` plus the iGPU carve-out and selects v2
 on a 128 GB machine or ht43 on a 96 GB one. A machine below 96 GB stops setup;
-neither model fits.
+neither model fits. `./setup.sh --lowvram` selects ht43 on any machine — the
+low VRAM model, which on this branch always runs with the 8-bit KV cache.
 
 ## config.env reference
 
@@ -111,11 +112,13 @@ MODELS_DIR=/home/you/models/halogen-models
 HALOGEN_IMAGE=ghcr.io/peonist-ai/halogen-flash-server:0.18.22
 HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn
 HALOGEN_KV_SLOTS=4
+HALOGEN_KV8=1
 HALOGEN_VISION_TOWER=1
 ```
 
 A 96 GB machine gets `/models/qwen38-flash-next-ht43.hgn` for
-`HALOGEN_CHECKPOINT` instead.
+`HALOGEN_CHECKPOINT` instead; so does any machine set up with
+`./setup.sh --lowvram`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -128,6 +131,7 @@ A 96 GB machine gets `/models/qwen38-flash-next-ht43.hgn` for
 | `HALOGEN_CHECKPOINT` | set by setup: v2 on 128 GB, ht43 on 96 GB | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the path for the machine's memory size. The scripts read the base name to decide which files to check and which to leave out of a download, so one model never pulls another. Unset, the engine picks its own default. |
 | `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `hl-gn-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
+| `HALOGEN_KV8` | `1` (written by setup) | The 8-bit KV cache: the attention cache's keys and values are kept in 8 bits instead of 16, which nearly halves its memory for a decode cost of about 1–2%. Set `0` for the 16-bit cache. `./run.sh --lowvram` forces it on for one start whatever the config says. Needs Halogen Flash 0.18.9 or newer. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
 | `HALOGEN_REASONING_EFFORT` | *(unset = the model's own `xhigh`, recommended by the model card)* | Reasoning effort for a request that names none: `minimal`, `low`, `medium`, `high` or `xhigh`. setup.sh leaves it commented in config.env; uncomment it (e.g. `medium` to think less) or override per start (`HALOGEN_REASONING_EFFORT=medium ./run.sh`). A request that sends `reasoning_effort` wins; `/health` reports the effective default. |
@@ -148,6 +152,7 @@ podman run --rm --name halogen-flash \
   -p 127.0.0.1:8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_KV_SLOTS=4 \
+  -e HALOGEN_KV8=1 \
   -e HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn \
   [-e HALOGEN_API_KEY=hl-gn-...] \
   [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \

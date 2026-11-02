@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # setup.sh — Interactive onboarding for Qwen3.8-Flash-Next via halogen-flash-server
 # on AMD Strix Halo.
+#
+# Usage: ./setup.sh [--lowvram]
+#   --lowvram   set up the low VRAM model (ht43) with the 8-bit KV cache,
+#               even on a 128 GB machine
+#
 # Writes config.env (plain KEY=value data) which run.sh reads. Re-running
 # setup.sh overwrites config.env with no backup.
 # The engine is halogen-flash-server: a prebuilt container image. No local
@@ -16,6 +21,21 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 . "$SCRIPT_DIR/lib/common.sh"
 
 require_not_root
+
+# ── Flags ────────────────────────────────────────────────────────────────────
+# --lowvram picks the smaller model (ht43) even on a 128 GB machine. The
+# 8-bit KV cache is on for every setup on this branch; --lowvram does not
+# change that, it only changes the model.
+LOWVRAM=false
+for arg in "$@"; do
+    case "$arg" in
+        --lowvram) LOWVRAM=true ;;
+        *)
+            echo "Error: unknown option: $arg (usage: ./setup.sh [--lowvram])" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Ctrl-C: say where things stand and how to finish. The config is written
 # only after every question, so the flag distinguishes "interrupted during
@@ -239,12 +259,24 @@ if [[ "$HALO_MEMORY_SIZE" == "unknown" ]]; then
     err "This machine reports about ${HALO_MEMORY_GIB} GiB of memory. Halogen Flash needs a 96 GB or 128 GB Strix Halo."
 fi
 CHECKPOINT_FILE="$(preferred_checkpoint "$HALO_MEMORY_SIZE")"
+if [[ "$LOWVRAM" == "true" ]]; then
+    CHECKPOINT_FILE="$HF_HT43_CHECKPOINT_FILE"
+fi
 QUANT_DOWNLOAD_GIB="$(quant_download_gib "$CHECKPOINT_FILE")"
-if [[ "$HALO_MEMORY_SIZE" == "96" ]]; then
+if [[ "$CHECKPOINT_FILE" == "$HF_HT43_CHECKPOINT_FILE" ]]; then
     DISK_MIN_GIB=120
 fi
+# The 8-bit KV cache is the default on this branch: it nearly halves the
+# attention cache's memory for a small decode cost. HALOGEN_KV8=0 in
+# config.env turns it off; run.sh --lowvram forces it on for one start.
+HALOGEN_KV8=1
 info "Machine:    ${HALO_MEMORY_SIZE} GB Strix Halo"
 info "Model:      $(quant_label "$CHECKPOINT_FILE")"
+if [[ "$CHECKPOINT_FILE" == "$HF_HT43_CHECKPOINT_FILE" ]]; then
+    info "Using the low VRAM model (ht43) and the 8-bit KV cache."
+else
+    info "Using the 8-bit KV cache."
+fi
 
 # ── GPU device access ────────────────────────────────────────────────────────
 # The engine opens /dev/kfd and a /dev/dri/render* node. On Fedora and Arch the
@@ -889,6 +921,8 @@ HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_CHECKPOINT=/models/$CHECKPOINT_FILE
 $API_KEY_LINE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
+# 8-bit KV cache (halves the attention cache memory). Set 0 for 16-bit.
+HALOGEN_KV8=$HALOGEN_KV8
 # Reasoning effort (default: xhigh). Uncomment to change:
 # HALOGEN_REASONING_EFFORT=medium
 CONFIG_EOF
@@ -969,6 +1003,10 @@ else
         echo "  Vision is off, so its sidecar (0.84 GiB) and the unused speed"
         echo "  overlay and MTP head (~4 GiB) are skipped. Re-run setup with"
         echo "  vision on to fetch the sidecar."
+        echo ""
+    fi
+    if [[ "$CHECKPOINT_FILE" == "$HF_HT43_CHECKPOINT_FILE" ]]; then
+        echo "  Using the low VRAM model (ht43) and the 8-bit KV cache."
         echo ""
     fi
     if ask_yes_no "  Download the weights now (~${QUANT_DOWNLOAD_GIB} GiB)?" y; then
@@ -1054,6 +1092,9 @@ echo "  Weights:    $MODELS_DIR (not downloaded)"
 fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
+if [[ "$HALOGEN_KV8" == "1" ]]; then
+echo "  KV cache:   8-bit"
+fi
 echo "  Bind:       $BIND_HOST:$PORT"
 if [[ -n "$API_KEY" ]]; then
 echo "  API key:    $API_KEY"
