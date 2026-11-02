@@ -971,11 +971,16 @@ if (( WEIGHTS_RC == 0 )); then
     WEIGHTS_READY=true
     ok "Weights present and the expected size in $MODELS_DIR."
 else
-    echo "  The weights are not all in place:"
+    echo "  Some weights missing:"
     while read -r st file detail; do
         case "$st" in
-            missing)    echo "    missing:    $file" ;;
-            incomplete) echo "    incomplete: $file ($detail)" ;;
+            missing)    warn "missing:    $file" ;;
+            incomplete) warn "incomplete: $file ($detail)" ;;
+        esac
+    done <<<"$WEIGHTS_STATUS"
+    while read -r st file detail; do
+        case "$st" in
+            ok|unverified) ok "present:    $file" ;;
         esac
     done <<<"$WEIGHTS_STATUS"
     echo ""

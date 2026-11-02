@@ -117,11 +117,16 @@ fi
 WEIGHTS_RC=0
 WEIGHTS_STATUS="$(weights_check "$MODELS_DIR" "$VISION_FLAG" auto "$CK_BASE" 2>/dev/null)" || WEIGHTS_RC=$?
 if (( WEIGHTS_RC != 0 )); then
-    warn "The weights in $MODELS_DIR are not all in place:"
+    warn "Some weights missing in $MODELS_DIR:"
     while read -r st file detail; do
         case "$st" in
-            missing)    echo "    missing:    $file" ;;
-            incomplete) echo "    incomplete: $file ($detail)" ;;
+            missing)    warn "missing:    $file" ;;
+            incomplete) warn "incomplete: $file ($detail)" ;;
+        esac
+    done <<<"$WEIGHTS_STATUS"
+    while read -r st file detail; do
+        case "$st" in
+            ok|unverified) ok "present:    $file" ;;
         esac
     done <<<"$WEIGHTS_STATUS"
     echo ""
