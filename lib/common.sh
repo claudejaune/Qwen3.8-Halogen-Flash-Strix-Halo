@@ -12,7 +12,7 @@ CONFIG_ALLOWED_KEYS=(
     CHECKPOINT_SHA256 VISION_SHA256
     HALOGEN_IMAGE HALOGEN_MODEL_ID HALOGEN_CHECKPOINT
     HALOGEN_API_KEY
-    HALOGEN_CTX HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS
+    HALOGEN_CTX HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS HALOGEN_KV8
     HALOGEN_VISION_TOWER
     HALOGEN_REASONING_EFFORT
     HALOGEN_EXTRA_ENV
@@ -43,6 +43,10 @@ HF_RESOLVE_URL="https://huggingface.co/$HF_REPO_ID/resolve/main"
 # v2 is the current quant: one checkpoint file with no sidecar, plus its
 # lookup table beside it (~110 GiB together).
 HF_CHECKPOINT_FILE="qwen38-flash-next-v2.hgn"
+# ht43 is the smaller quant (~102 GiB together) that ./setup.sh --lowvram
+# selects. It reads the same lookup table as v2 and holds about 8 GiB less
+# in memory. Added in engine 0.16.
+HF_HT43_CHECKPOINT_FILE="qwen38-flash-next-ht43.hgn"
 HF_NGRAM_FILE="qwen38-flash-next-ngram.hgn"
 # w4b is the 0.14 quant: the checkpoint plus its quality sidecar. Deprecated
 # upstream since 0.16.2 and outside its release testing, though it still
@@ -497,11 +501,13 @@ quant_is_legacy() {
 }
 
 # quant_files <base-name> — the .hgn files that quant needs, one per line.
-# w4b is two files (the checkpoint and its quality sidecar); v2 is one file
-# plus its lookup table.
+# w4b is two files (the checkpoint and its quality sidecar); v2 and ht43 are
+# one checkpoint each plus the lookup table they share.
 quant_files() {
     if quant_is_legacy "$1"; then
         printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+    elif [[ "$1" == "$HF_HT43_CHECKPOINT_FILE" ]]; then
+        printf '%s\n' "$HF_HT43_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
     else
         printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
     fi
@@ -509,12 +515,15 @@ quant_files() {
 
 # other_quant_files <base-name> — the .hgn files belonging to the quant this
 # deployment does NOT run. Excluded from every download so one switch never
-# pulls both generations (~170 GiB) when only ~110 GiB is wanted.
+# pulls every checkpoint when only one is wanted. The lookup table is shared
+# by v2 and ht43, so it is excluded only for w4b, which does not read it.
 other_quant_files() {
     if quant_is_legacy "$1"; then
-        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_HT43_CHECKPOINT_FILE" "$HF_NGRAM_FILE"
+    elif [[ "$1" == "$HF_HT43_CHECKPOINT_FILE" ]]; then
+        printf '%s\n' "$HF_CHECKPOINT_FILE" "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
     else
-        printf '%s\n' "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
+        printf '%s\n' "$HF_HT43_CHECKPOINT_FILE" "$HF_LEGACY_CHECKPOINT_FILE" "$HF_LEGACY_OVERLAY_FILE"
     fi
 }
 
@@ -525,9 +534,20 @@ quant_floor_gib() {
     case "$1" in
         "$HF_LEGACY_CHECKPOINT_FILE") printf '110\n' ;;
         "$HF_CHECKPOINT_FILE")        printf '55\n'  ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '50\n'  ;;
         "$HF_NGRAM_FILE")            printf '42\n'  ;;
         "$HF_LEGACY_OVERLAY_FILE")   printf '2\n'   ;;
         *)                           printf '0\n'   ;;
+    esac
+}
+
+# quant_download_gib <base-name> — the download this model needs on a fresh
+# volume, in GiB, for prompts.
+quant_download_gib() {
+    case "$1" in
+        "$HF_LEGACY_CHECKPOINT_FILE") printf '118\n' ;;
+        "$HF_HT43_CHECKPOINT_FILE")   printf '102\n' ;;
+        *)                            printf '110\n' ;;
     esac
 }
 

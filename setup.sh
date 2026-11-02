@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # setup.sh — Interactive onboarding for Qwen3.8-Flash-Next via halogen-flash-server
 # on AMD Strix Halo.
+#
+# Usage: ./setup.sh [--lowvram]
+#   --lowvram   set up the low VRAM model (ht43) with the 8-bit KV cache
+#
 # Writes config.env (plain KEY=value data) which run.sh reads. Re-running
 # setup.sh overwrites config.env with no backup.
 # The engine is halogen-flash-server: a prebuilt container image. No local
@@ -16,6 +20,20 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 . "$SCRIPT_DIR/lib/common.sh"
 
 require_not_root
+
+# ── Flags ────────────────────────────────────────────────────────────────────
+# --lowvram picks the smaller model (ht43) and always pairs it with the
+# 8-bit KV cache. Without it, setup runs v2 with the 16-bit cache as before.
+LOWVRAM=false
+for arg in "$@"; do
+    case "$arg" in
+        --lowvram) LOWVRAM=true ;;
+        *)
+            echo "Error: unknown option: $arg (usage: ./setup.sh [--lowvram])" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Ctrl-C: say where things stand and how to finish. The config is written
 # only after every question, so the flag distinguishes "interrupted during
@@ -43,6 +61,15 @@ MODELS_DIR="$HOME/models/halogen-models"
 CHECKPOINT_FILE="$HF_CHECKPOINT_FILE"
 VISION_FILE="qwen38-flash-next-vision.hgn"
 DISK_MIN_GIB=130
+HALOGEN_KV8=0
+if [[ "$LOWVRAM" == "true" ]]; then
+    # The low VRAM model holds about 8 GiB less in memory than v2, and the
+    # 8-bit KV cache nearly halves the attention cache on top of that.
+    CHECKPOINT_FILE="$HF_HT43_CHECKPOINT_FILE"
+    DISK_MIN_GIB=120
+    HALOGEN_KV8=1
+fi
+QUANT_DOWNLOAD_GIB="$(quant_download_gib "$CHECKPOINT_FILE")"
 
 # Preserve an existing weights location across setup runs (extracted by grep
 # — we deliberately do NOT execute the old config here).
@@ -229,6 +256,9 @@ echo ""
 MEM_TOTAL_GIB=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 MEM_AVAIL_GIB=$(awk '/MemAvailable/ {printf "%.0f", $2/1048576}' /proc/meminfo)
 info "Total RAM: ${MEM_TOTAL_GIB} GiB  Available: ${MEM_AVAIL_GIB} GiB"
+if [[ "$LOWVRAM" == "true" ]]; then
+    info "Using the low VRAM model (ht43) and the 8-bit KV cache."
+fi
 
 # ── GPU device access ────────────────────────────────────────────────────────
 # The engine opens /dev/kfd and a /dev/dri/render* node. On Fedora and Arch the
@@ -648,7 +678,7 @@ while true; do
     else
         THIS_DEFAULT="$MODELS_DIR"
     fi
-    echo "  Folder for the model (about 110 GiB). Press Enter for the default: $THIS_DEFAULT"
+    echo "  Folder for the model (about ${QUANT_DOWNLOAD_GIB} GiB). Press Enter for the default: $THIS_DEFAULT"
     echo "  It must be an absolute path"
     ask MODELS_DIR "Weights directory" "$THIS_DEFAULT"
     FALLBACK_DEFAULT=false
@@ -842,6 +872,14 @@ if [[ -n "$API_KEY" ]]; then
     API_KEY_LINE="HALOGEN_API_KEY=$API_KEY"
 fi
 
+# The 8-bit KV cache is written only when --lowvram asked for it. Otherwise
+# the line stays commented so the knob is still discoverable; ./run.sh
+# --lowvram forces it on for one start without a config change.
+KV8_LINE="# HALOGEN_KV8=1                  # 8-bit KV cache (halves KV memory); ./run.sh --lowvram forces it on"
+if [[ "$HALOGEN_KV8" == "1" ]]; then
+    KV8_LINE=$'# 8-bit KV cache (halves the attention cache memory). Set 0 for 16-bit.\nHALOGEN_KV8=1'
+fi
+
 # config.env is the one file here that can hold a secret (HF_TOKEN), so create
 # it owner-only. The appends below keep the mode.
 (
@@ -862,6 +900,7 @@ HALOGEN_IMAGE=$DEFAULT_IMAGE
 HALOGEN_CHECKPOINT=/models/$CHECKPOINT_FILE
 $API_KEY_LINE
 HALOGEN_KV_SLOTS=$HALOGEN_KV_SLOTS
+$KV8_LINE
 # Reasoning effort (default: xhigh). Uncomment to change:
 # HALOGEN_REASONING_EFFORT=medium
 CONFIG_EOF
@@ -944,7 +983,11 @@ else
         echo "  vision on to fetch the sidecar."
         echo ""
     fi
-    if ask_yes_no "  Download the weights now (~110 GiB)?" y; then
+    if [[ "$LOWVRAM" == "true" ]]; then
+        echo "  Using the low VRAM model (ht43) and the 8-bit KV cache."
+        echo ""
+    fi
+    if ask_yes_no "  Download the weights now (~${QUANT_DOWNLOAD_GIB} GiB)?" y; then
         # Re-check space: the gate above ran before the image pull.
         avail="$(disk_avail_gib "$MODELS_DIR" 2>/dev/null)" || avail=""
         if [[ -n "$avail" ]] && (( avail < DISK_MIN_GIB )); then
@@ -1027,6 +1070,9 @@ echo "  Weights:    $MODELS_DIR (not downloaded)"
 fi
 echo "  Slots:      $HALOGEN_KV_SLOTS"
 echo "  Vision:     $([[ "$HALOGEN_VISION_TOWER" == "1" ]] && echo on || echo off)"
+if [[ "$HALOGEN_KV8" == "1" ]]; then
+echo "  KV cache:   8-bit"
+fi
 echo "  Bind:       $BIND_HOST:$PORT"
 if [[ -n "$API_KEY" ]]; then
 echo "  API key:    $API_KEY"
@@ -1043,7 +1089,7 @@ echo ""
 if [[ "$WEIGHTS_READY" == "true" ]]; then
 echo "  Start the server with ./run.sh. The first start takes a few minutes."
 else
-echo "  Run ./run.sh to download the model (~110 GiB)."
+echo "  Run ./run.sh to download the model (~${QUANT_DOWNLOAD_GIB} GiB)."
 fi
 echo ""
 

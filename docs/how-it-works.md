@@ -15,7 +15,9 @@ One image serves one checkpoint. The current one is
 `qwen38-flash-next-v2.hgn` (62 GiB) with its lookup table
 `qwen38-flash-next-ngram.hgn` (48 GiB) beside it — about 110 GiB together,
 plus a tokenizer. `HALOGEN_CHECKPOINT` names the file the engine loads, and
-setup writes the v2 path into `config.env`. The 0.14 quant,
+setup writes the v2 path into `config.env`. `./setup.sh --lowvram` writes
+the smaller `qwen38-flash-next-ht43.hgn` (54 GiB, same lookup table, about
+102 GiB together) and turns on the 8-bit KV cache. The 0.14 quant,
 `qwen38-flash-next-w4b.hgn` with its 2.4 GiB quality sidecar, is deprecated
 upstream since engine 0.16.2; `refresh.sh` offers to replace it with v2 on a
 volume that still holds it.
@@ -63,12 +65,17 @@ container starts serving instead of downloading.
    the same prompt is offered as a space reclaim only — declining leaves
    both weights in place and the server on v2. The vision sidecar and the
    tokenizer are always kept; both quants use them.
-10. **Disk check** — the weights are ~110 GiB; setup stops under 130 GiB
-    free when a download is actually needed.
+10. **Disk check** — the weights are ~110 GiB (~102 GiB with `--lowvram`);
+    setup stops under 130 GiB free (120 GiB with `--lowvram`) when a
+    download is actually needed.
 11. **Write config.env** — before anything is downloaded.
 12. **Fetch phase** — offers to `podman pull` the image, then the weights.
     Arrived files are checked by exact byte size against the repo's live
     listing. The download includes only the files the configuration uses.
+
+**`--lowvram`:** `./setup.sh --lowvram` sets up the low VRAM model (ht43)
+with the 8-bit KV cache. `./run.sh --lowvram` forces the 8-bit KV cache for
+one start without changing the model.
 
 **Ctrl-C is safe**: setup.sh traps it and says where things stand. Before the
 config is written, the only change is any bootloader edit you approved — run
@@ -116,9 +123,10 @@ HALOGEN_VISION_TOWER=1
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
 | `VISION_SHA256` | *(written by setup, vision only)* | Same idea for the vision sidecar. |
 | `HALOGEN_IMAGE` | set by setup | The image (and tag) run.sh starts. One pinned tag; change it via `./refresh.sh`. |
-| `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
+| `HALOGEN_CHECKPOINT` | `/models/qwen38-flash-next-v2.hgn` | The checkpoint the engine loads, as a path inside the container's `/models` volume. setup.sh writes the v2 path, or the ht43 path with `--lowvram`. The scripts read the base name to decide which files to check and which to leave out of a download, so a v2 volume never pulls w4b. Unset, the engine picks its own default. |
 | `HALOGEN_API_KEY` | *(setup offers one; unset = no key)* | Require an API key on the API port. Clients send it as `Authorization: Bearer <key>` (OpenAI-shaped clients) or `x-api-key: <key>` (Anthropic-shaped ones). `/health` stays open; every other route answers 401 without the key. Several keys may be comma-separated. **Set but empty refuses to start**, so `run.sh` drops an empty value rather than forwarding it. setup.sh generates `hl-gn-` plus 24 hex characters and never rotates an existing key on a re-run. `HALOGEN_API_KEY_FILE` is the alternative that reads the key from a mounted file so it stays out of the container's environment; set that one *or* `HALOGEN_API_KEY`, not both. |
 | `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. Each stream runs at its own speed; past 8 total throughput stops growing. |
+| `HALOGEN_KV8` | *(unset = off)* | The 8-bit KV cache: the attention cache's keys and values are kept in 8 bits instead of 16, which nearly halves its memory for a decode cost of about 1–2%. `./setup.sh --lowvram` writes `1`; `./run.sh --lowvram` forces it on for one start whatever the config says. Needs Halogen Flash 0.18.9 or newer. |
 | `HALOGEN_KV_POOL_POSITIONS` | *(unset = the image's default)* | Advanced: the KV pool's size in positions — one pool shared by all slots. Unset uses the image's own sizing. |
 | `HALOGEN_VISION_TOWER` | *(unset = off)* | `1` loads the vision sidecar beside the checkpoint and enables image input on `/v1/chat/completions` and `/v1/responses`. |
 | `HALOGEN_REASONING_EFFORT` | *(unset = the model's own `xhigh`, recommended by the model card)* | Reasoning effort for a request that names none: `minimal`, `low`, `medium`, `high` or `xhigh`. setup.sh leaves it commented in config.env; uncomment it (e.g. `medium` to think less) or override per start (`HALOGEN_REASONING_EFFORT=medium ./run.sh`). A request that sends `reasoning_effort` wins; `/health` reports the effective default. |
@@ -143,7 +151,7 @@ podman run --rm --name halogen-flash \
   [-e HALOGEN_API_KEY=hl-gn-...] \
   [-e HALOGEN_KV_POOL_POSITIONS=...] [-e HALOGEN_CTX=...] \
   [-e HALOGEN_MODEL_ID=...] [-e HALOGEN_VISION_TOWER=1] \
-  [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
+  [-e HALOGEN_KV8=1] [-e HALOGEN_REASONING_EFFORT=...] [-e KEY=value ...] \
   -v ~/models/halogen-models:/models \
   ghcr.io/peonist-ai/halogen-flash-server:0.18.22
 ```
