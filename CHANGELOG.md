@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.4.0 - 2026-11-02
+
+- `./setup.sh --lowvram` sets up the low VRAM model (ht43) with the 8-bit KV cache
+- `./run.sh --lowvram` turns on the 8-bit KV cache for one start
+- Download prompts now show what the download will actually fetch
+- The weights check now lists the files already on disk
+- Removed redundant messages and made the existing ones more human-readable
+
 ## 1.3.2 - 2026-11-02
 
 - Pin the default Halogen Flash version to `0.18.22` in `setup.sh` and `refresh.sh`

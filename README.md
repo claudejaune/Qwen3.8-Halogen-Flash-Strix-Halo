@@ -79,6 +79,40 @@ git pull
 
 Point your harness to the IP address, port (`http://127.0.0.1:8731/v1` by default), and API key you chose, or tell your agent to add it to your harness' models list. It should then appear as `Halogen Qwen 3.8 Flash` (or whatever you named it) in your list.
 
+## Saving VRAM
+
+Strix Halo has plenty of VRAM, but you can save some in case you want to run other models while Halogen Flash stays loaded.
+
+### Use the 8-bit KV cache
+
+You can save ~6-7 GB of VRAM by using the 8-bit KV cache instead of the default 16-bit. Expect a (very slight) intelligence/quality loss.
+
+Run the server as follows:
+
+```bash
+./run.sh --lowvram
+```
+
+Same quant, nothing to download. You can switch back to 16-bit KV cache by running `run.sh` without the `--lowvram` option.
+
+### Use the smaller quant
+
+Halogen Flash also offers a smaller quant called `ht43`. It's ~8.4 GB smaller than the full-size `v2` one. Expect a (very slight) intelligence/quality loss.
+
+Run `setup.sh` as follows:
+
+```bash
+./setup.sh --lowvram
+```
+
+This will modify your config file to use the smaller `ht43` model and offer to download it (~53.7 GiB). It'll also switch the KV cache to 8-bit to save even more VRAM. 
+
+Run Halogen Flash as usual:
+
+```bash
+./run.sh
+```
+
 ## Performance
 
 Stable, sustained 65+ tok/s decode on multi-turn development on *real* codebases, without benchmark number trickery.
