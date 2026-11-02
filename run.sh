@@ -293,12 +293,10 @@ echo "  NOTE: UNAUTHENTICATED. Anyone on the network can reach this server."
 echo "  ./refresh.sh offers to add an API key."
 fi
 echo ""
-echo "  Stop:      ./stop.sh (from another terminal)"
+echo "  Stop:      Ctrl + C"
+echo "             OR run ./stop.sh from another terminal"
 echo ""
-if (( WEIGHTS_RC == 0 )); then
-echo "  The weights are in place; loading them takes minutes on a cold start."
-echo "  The download is skipped whenever the files are complete."
-else
+if (( WEIGHTS_RC != 0 )); then
 echo "  The weights are not complete: this start downloads them (~${DOWNLOAD_GIB} GiB,"
 echo "  resumes if interrupted) and then loads them for minutes."
 fi
