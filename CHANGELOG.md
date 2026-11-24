@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.4.1 - 2026-11-24
+
+- `BIND_HOST` in `config.env` now accepts any IPv4 address, so the API can be published on one interface only (a Tailscale address, for example)
+- `./run.sh` warns when `BIND_HOST` is not an address on this machine, and lists the addresses it does have
+- The endpoint `./run.sh` prints now names the address you bound, instead of the machine's first address
+
 ## 1.4.0 - 2026-11-02
 
 - `./setup.sh --lowvram` sets up the low VRAM model (ht43) with the 8-bit KV cache

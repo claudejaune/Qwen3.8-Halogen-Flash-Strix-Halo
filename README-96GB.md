@@ -39,7 +39,7 @@ To stop the server, press Ctrl-C from the same terminal, or run `./stop.sh`.
 
 ### What setup.sh asks you
 
-- Network binding: `localhost` (default) or all interfaces (0.0.0.0)
+- Network binding: `localhost` (default) or all interfaces (0.0.0.0). `config.env` also takes a single address, such as a Tailscale IP, to publish on that interface only.
 - The port to run it on
 - Vision on/off
 - Parallel slots (maximum allowed concurrent requests)
@@ -124,7 +124,7 @@ git switch strix-halo-96gb
 
 ### setup.sh が尋ねる内容
 
-- ネットワークバインディング: `localhost`（既定）またはすべてのインターフェース（0.0.0.0）
+- ネットワークバインディング: `localhost`（既定）またはすべてのインターフェース（0.0.0.0）。`config.env` では Tailscale の IP など単一のアドレスを指定すると、そのインターフェースのみに公開できます。
 - 使用するポート
 - ビジョンのオン/オフ
 - 並列スロット数（同時に処理できるリクエストの最大数）
