@@ -104,6 +104,27 @@ err()   { echo -e "\033[1;31m[ERR ]\033[0m  $*" >&2; exit 1; }
 
 have() { command -v "$1" &>/dev/null; }
 
+# valid_ipv4_address <value> — true for a dotted-quad IPv4 address: four
+# decimal octets 0-255. Names and IPv6 are rejected: a published port is
+# bound to an address, and podman wants the address spelled in full.
+# Octets with a leading zero are rejected too — 010 is not an address, and
+# it would read as 10 here and fail at the port binding.
+valid_ipv4_address() {
+    local ip="$1" octet
+    local -a octets
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    IFS='.' read -r -a octets <<<"$ip"
+    for octet in "${octets[@]}"; do
+        if [[ "$octet" != "0" && "$octet" == 0* ]]; then
+            return 1
+        fi
+        if (( octet > 255 )); then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Regular user only — podman runs rootless, and the models directory and
 # config.env must be owned by the user who runs the server.
 require_not_root() {
