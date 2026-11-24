@@ -59,9 +59,21 @@ for var in PORT HALOGEN_KV_SLOTS HALOGEN_KV_POOL_POSITIONS HALOGEN_CTX HALOGEN_K
     fi
 done
 
-if [[ "${BIND_HOST}" != "127.0.0.1" && "${BIND_HOST}" != "0.0.0.0" ]]; then
-    echo "Error: BIND_HOST must be 127.0.0.1 or 0.0.0.0, got '${BIND_HOST}' in config.env." >&2
+if ! valid_ipv4_address "$BIND_HOST"; then
+    echo "Error: BIND_HOST must be an IPv4 address — 0.0.0.0 for every interface, 127.0.0.1 for this machine only, got '${BIND_HOST}' in config.env." >&2
     exit 1
+fi
+
+# The published address must belong to this machine now, or the port cannot
+# be bound. An interface that comes up later (a VPN, Tailscale) is worth
+# starting anyway, so this only warns and names what is here.
+if [[ "$BIND_HOST" != "0.0.0.0" && "$BIND_HOST" != "127.0.0.1" ]]; then
+    HOST_ADDRESSES="$(hostname -I 2>/dev/null || true)"
+    if [[ -n "$HOST_ADDRESSES" ]] && ! tr ' ' '\n' <<<"$HOST_ADDRESSES" | grep -qx "$BIND_HOST"; then
+        warn "$BIND_HOST is not an address on this machine, so the port can't be published on it."
+        warn "Addresses here: ${HOST_ADDRESSES// /  }"
+        warn "Fix BIND_HOST in config.env, or bring that interface up before ./run.sh."
+    fi
 fi
 
 # Value ranges — same rules setup.sh enforces, for a hand-edited config
@@ -156,11 +168,13 @@ fi
 
 # The engine port has no authentication and is never published. The API port
 # is fixed at 8731 inside the container and mapped to $PORT on the host;
-# HALOGEN_API_KEY, when set, is what protects that port.
+# HALOGEN_API_KEY, when set, is what protects that port. BIND_HOST picks the
+# interface the host port is bound to: 0.0.0.0 is every interface, any other
+# address is that one alone.
 if [[ "$BIND_HOST" == "0.0.0.0" ]]; then
     PUBLISH=(-p "$PORT:8731")
 else
-    PUBLISH=(-p "127.0.0.1:$PORT:8731")
+    PUBLISH=(-p "$BIND_HOST:$PORT:8731")
 fi
 
 # The container name must be free: podman refuses a --rm run whose name is
@@ -254,10 +268,11 @@ if ! podman image exists "$HALOGEN_IMAGE" 2>/dev/null; then
     podman pull "$HALOGEN_IMAGE"
 fi
 
-# Host shown in the connection info: the LAN IP when bound to the network,
-# the loopback address when bound to localhost.
+# Host shown in the connection info. A specific address is the address a
+# client types, so it stands on its own; 0.0.0.0 is not one, so the
+# machine's own first address is shown instead.
 DISPLAY_HOST="$BIND_HOST"
-if [[ "$BIND_HOST" != "127.0.0.1" ]]; then
+if [[ "$BIND_HOST" == "0.0.0.0" ]]; then
     DISPLAY_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
     if [[ -z "$DISPLAY_HOST" ]]; then
         DISPLAY_HOST="$BIND_HOST"
@@ -287,9 +302,9 @@ if [[ -n "${HALOGEN_API_KEY:-}" ]]; then
 echo "  API key:   $HALOGEN_API_KEY"
 echo "  Clients send it as   Authorization: Bearer $HALOGEN_API_KEY"
 echo "                   or  x-api-key: $HALOGEN_API_KEY"
-elif [[ "$BIND_HOST" == "0.0.0.0" ]]; then
+elif [[ "$BIND_HOST" != "127.0.0.1" ]]; then
 echo ""
-echo "  NOTE: UNAUTHENTICATED. Anyone on the network can reach this server."
+echo "  NOTE: UNAUTHENTICATED. Anyone who can reach $DISPLAY_HOST can use this server."
 echo "  ./refresh.sh offers to add an API key."
 fi
 echo ""

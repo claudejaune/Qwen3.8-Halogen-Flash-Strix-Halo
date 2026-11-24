@@ -122,7 +122,7 @@ A 96 GB machine gets `/models/qwen38-flash-next-ht43.hgn` for
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BIND_HOST` | `127.0.0.1` | `127.0.0.1` publishes the API on host loopback only; `0.0.0.0` publishes on all interfaces. A LAN server is reachable by everyone on the network, which is what the API key is for — setup offers one on both bindings. |
+| `BIND_HOST` | `127.0.0.1` | The host address the API port is published on. `127.0.0.1` publishes on loopback only; `0.0.0.0` publishes on every interface; any other address this machine holds — a Tailscale address, for example — publishes on that address alone. Anything past loopback is reachable by others on that network, which is what the API key is for — setup offers one on every binding. Any IPv4 address is accepted; a host name or an IPv6 address is not. `./setup.sh` writes only `127.0.0.1` or `0.0.0.0`, so a re-run replaces a hand-written address. |
 | `PORT` | `8731` | Host port; mapped to the container's fixed API port 8731 (`-p 127.0.0.1:$PORT:8731`). The default matches the image's own API port, so host and container agree on one number. |
 | `MODELS_DIR` | `~/models/halogen-models` | Where the model (~110 GiB for v2, ~102 GiB for ht43) lives and downloads into; mounted at `/models` in the container. setup.sh preserves it across re-runs. |
 | `CHECKPOINT_SHA256` | *(written by setup)* | The sha256 the HF repo currently lists for the checkpoint, queried live at every setup run. refresh.sh re-queries and compares — a difference means upstream shipped a new version (or your file is damaged). Offline setups leave it commented. |
@@ -171,7 +171,8 @@ On a 96 GB machine, `HALOGEN_CHECKPOINT` is
 - `--group-add keep-groups` is the podman form of being in the `video` and
   `render` groups.
 - The engine's own port (8730) is **never published**: its protocol has no
-  authentication. Only the API (8731, mapped to `$PORT`) is reachable.
+  authentication. Only the API (8731, mapped to `$PORT` on the `BIND_HOST`
+  address) is reachable.
 - The models volume is read-**write**: first start downloads into it, and a
   later start re-fetches a stale quality sidecar if it is writable.
 - `--name halogen-flash` makes the container findable by `stop.sh` and
