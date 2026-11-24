@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.4.2 - 2026-11-24
+
+- Pin the default Halogen Flash version to `0.20.7` in `setup.sh` and `refresh.sh`
+
 ## 1.4.1 - 2026-11-24
 
 - `BIND_HOST` in `config.env` now accepts any IPv4 address, so the API can be published on one interface only (a Tailscale address, for example)
