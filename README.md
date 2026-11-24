@@ -41,7 +41,7 @@ To stop the server, press Ctrl-c from the same terminal, or run `./stop.sh`.
 
 ### What setup.sh asks you
 
-- Network binding: `localhost` (default) or all interfaces (0.0.0.0)
+- Network binding: `localhost` (default) or all interfaces (0.0.0.0). `config.env` also takes a single address, such as a Tailscale IP, to publish on that interface only.
 - The port to run it on
 - Vision on/off
 - Parallel slots (maximum allowed concurrent requests)
